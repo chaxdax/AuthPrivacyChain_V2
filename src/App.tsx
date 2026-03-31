@@ -74,7 +74,7 @@ function App() {
     formData.append('file', selectedFile);
     const token = localStorage.getItem('apc_token');
     try {
-      const response = await axios.post('http://127.0.0.1:5000/encrypt', formData, {
+      const response = await axios.post('https://authprivacychain-v2.onrender.com/encrypt', formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'x-access-token': token }
       });
       setFileEncryptionResult(response.data);
@@ -96,7 +96,7 @@ function App() {
   const runDecryption = async () => {
     if(!fileEncryptionResult) return;
     try {
-        const response = await axios.post('http://127.0.0.1:5000/decrypt', {
+        const response = await axios.post('https://authprivacychain-v2.onrender.com/decrypt', {
             encrypted_data: fileEncryptionResult.encrypted_data,
             iv: fileEncryptionResult.iv
         });
@@ -116,7 +116,7 @@ function App() {
     const key = prompt("ENTER MASTER KEY:");
     if (!key) return;
     try {
-      const response = await axios.post('http://127.0.0.1:5000/recover', { masterKey: key });
+      const response = await axios.post('https://authprivacychain-v2.onrender.com/recover', { masterKey: key });
       loginSuccess(response.data);
     } catch (error) { alert("Invalid Master Key!"); }
   };
@@ -137,7 +137,7 @@ function App() {
     const endpoint = view === 'signup' ? '/register' : '/login';
     
     try {
-      const response = await axios.post(`http://127.0.0.1:5000${endpoint}`, { 
+      const response = await axios.post(`https://authprivacychain-v2.onrender.com${endpoint}`, { 
         userID: identity, 
         password: password 
       });

@@ -14,11 +14,11 @@ const PermissionManager = () => {
     try {
       const headers = { 'x-user-identity': myIdentity };
       // Sync outbound shares
-      const resOutbound = await axios.get('http://127.0.0.1:5000/my-shares', { headers });
+      const resOutbound = await axios.get('https://authprivacychain-v2.onrender.com/my-shares', { headers });
       setActiveShares(resOutbound.data || []);
 
       // Sync inbound shared files
-      const resInbound = await axios.get('http://127.0.0.1:5000/shared-with-me', { headers });
+      const resInbound = await axios.get('https://authprivacychain-v2.onrender.com/shared-with-me', { headers });
       setReceivedFiles(resInbound.data || []);
     } catch (err) { 
       console.error("Sync failed - Backend might be unreachable."); 
@@ -31,7 +31,7 @@ const PermissionManager = () => {
 
   const handleGrant = async () => {
     try {
-      const res = await axios.post('http://127.0.0.1:5000/grant', {
+      const res = await axios.post('https://authprivacychain-v2.onrender.com/grant', {
         fileId: fileId.replace('#', '').trim(),
         targetUser: targetUser.trim(),
         owner: myIdentity
@@ -46,7 +46,7 @@ const PermissionManager = () => {
 
   const handleDecrypt = async (file: any) => {
     try {
-      const res = await axios.post('http://127.0.0.1:5000/view-decrypted', 
+      const res = await axios.post('https://authprivacychain-v2.onrender.com/view-decrypted', 
         { fileId: file.id, username: myIdentity }, 
         { responseType: 'blob' }
       );
@@ -65,7 +65,7 @@ const PermissionManager = () => {
 
   const handleRevoke = async (fId: string, tUser: string) => {
     try {
-      await axios.post('http://127.0.0.1:5000/revoke', {
+      await axios.post('https://authprivacychain-v2.onrender.com/revoke', {
         fileId: fId, targetUser: tUser, owner: myIdentity
       });
       fetchData();

@@ -21,7 +21,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     const myUsername = localStorage.getItem('apc_user'); // Needed for shared files
     try {
       // Fetch My Files
-      const resMy = await axios.get('http://127.0.0.1:5000/my-files', { 
+      const resMy = await axios.get('https://authprivacychain-v2.onrender.com/my-files', { 
         headers: { 'x-access-token': token } 
       });
       const myFiles = resMy.data.map((f: any) => ({ ...f, is_shared: false }));
@@ -29,7 +29,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
       // Fetch Shared Files
       let sharedFiles: any[] = [];
       try {
-        const resShared = await axios.get('http://127.0.0.1:5000/shared-with-me', { 
+        const resShared = await axios.get('https://authprivacychain-v2.onrender.com/shared-with-me', { 
           headers: { 'x-user-identity': myUsername } 
         });
         sharedFiles = resShared.data.map((f: any) => ({ ...f, is_shared: true }));
@@ -50,7 +50,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     formData.append('file', selectedFile);
     const token = localStorage.getItem('apc_token');
     try {
-      await axios.post('http://127.0.0.1:5000/upload', formData, {
+      await axios.post('https://authprivacychain-v2.onrender.com/upload', formData, {
         headers: { 
           'Content-Type': 'multipart/form-data', 
           'x-access-token': token 
@@ -70,7 +70,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     const token = localStorage.getItem('apc_token');
     setIsProcessing(true);
     try {
-      await axios.post(`http://127.0.0.1:5000/encrypt-pending`, {}, { 
+      await axios.post(`https://authprivacychain-v2.onrender.com/encrypt-pending`, {}, { 
         headers: { 'x-access-token': token } 
       });
       alert("AES-256 Protocol Executed. Files Secured.");
@@ -85,7 +85,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
   // --- FIXED DECRYPT LOGIC ---
   const handleDecrypt = async (file: any) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:5000/download/${file.id}`, {
+      const res = await axios.get(`https://authprivacychain-v2.onrender.com/download/${file.id}`, {
         headers: { 'x-access-token': localStorage.getItem('apc_token') },
         responseType: 'blob' 
       });
@@ -109,7 +109,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     if (!window.confirm("Delete file permanently?")) return;
     const token = localStorage.getItem('apc_token');
     try {
-      await axios.delete(`http://127.0.0.1:5000/delete-file/${id}`, { 
+      await axios.delete(`https://authprivacychain-v2.onrender.com/delete-file/${id}`, { 
         headers: { 'x-access-token': token } 
       });
       fetchFiles();
