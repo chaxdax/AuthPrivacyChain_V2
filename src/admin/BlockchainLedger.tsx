@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const ADMIN_TOKEN = 'admin-bypass';
-const API = (import.meta.env.VITE_API_URL || '${import.meta.env.VITE_API_URL || }');
+const API = 'http://127.0.0.1:5000';
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
 interface Block {
@@ -11,6 +11,7 @@ interface Block {
   owner_numeric_id: string;
   target_user_id: string;
   file_id: string;
+  filename: string;
   encrypted: boolean;
   prev_hash: string;
 }
@@ -40,7 +41,7 @@ export default function BlockchainLedger() {
 
   useEffect(() => {
     fetchLedger();
-    const interval = setInterval(fetchLedger, 10000); // Auto-refresh every 10s
+    const interval = setInterval(fetchLedger, 5000); // High-frequency forensic sync
     return () => clearInterval(interval);
   }, []);
 
@@ -129,12 +130,11 @@ export default function BlockchainLedger() {
         <table className="bl-table">
           <thead>
             <tr>
-              <th>Block Index</th>
-              <th>Record Type</th>
-              <th>Owner ID</th>
-              <th>Target User ID</th>
-              <th>Target File ID</th>
-              <th>Encryption</th>
+              <th>Block #</th>
+              <th>Event</th>
+              <th>Granted By</th>
+              <th>Granted To</th>
+              <th>File Name</th>
               <th>Hash Verification</th>
             </tr>
           </thead>
@@ -145,37 +145,36 @@ export default function BlockchainLedger() {
               <tr><td colSpan={7} className="bl-empty">No cryptographic blocks found.</td></tr>
             ) : (
               displayBlocks.map((block, index) => {
-                // Determine if this is the genesis block
                 const isGenesis = index === 0;
-                const recType = isGenesis ? 'SYSTEM_INIT' : block.record_type;
                 const isCorruptedRow = simulatedBreach && index === 1;
                 const isNextRow = simulatedBreach && index === 2;
-                
+                const actionColor = block.record_type === 'GRANT_ACCESS' ? '#10b981' : '#ef4444';
+                const actionLabel = block.record_type === 'GRANT_ACCESS' ? '✅ GRANTED' : '🚫 REVOKED';
+                const fileDisplay = block.filename || (block.file_id ? `#${block.file_id.substring(0, 8)}` : 'UNKNOWN');
+
                 return (
                   <tr key={index} className={`bl-row ${isCorruptedRow ? 'corrupted-row' : ''}`}>
                     <td className="bl-index-cell">#{index.toString().padStart(4, '0')}</td>
                     <td className="bl-record-cell">
-                      <span className={`record-tag rt-${recType}`}>{recType.replace('_', ' ')}</span>
+                      <span className="record-tag" style={{color: actionColor, borderColor: actionColor, background: `${actionColor}15`}}>
+                        {isGenesis ? 'SYSTEM_INIT' : actionLabel}
+                      </span>
                     </td>
-                    <td className="bl-user-cell">{block.owner_numeric_id}</td>
-                    <td className="bl-target-user-cell">{block.target_user_id}</td>
-                    <td className="bl-file-cell">{isGenesis ? 'GENESIS' : (block.file_id ? `#${block.file_id.substring(0, 4)}` : 'UNKNOWN')}</td>
-                    <td>
-                      {block.encrypted ? (
-                        <span className="bl-badge success">🔐 AES-256</span>
-                      ) : (
-                        <span className="bl-badge warning">⚠️ PLAIN TEXT</span>
-                      )}
+                    <td className="bl-user-cell" style={{color: '#6366f1', fontWeight: 700}}>{block.owner_numeric_id || '—'}</td>
+                    <td className="bl-target-user-cell" style={{color: '#3b82f6', fontWeight: 700}}>{block.target_user_id || '—'}</td>
+                    <td className="bl-file-cell" style={{color: fileDisplay === '[DELETED]' ? '#ef444490' : '#aaa', fontStyle: fileDisplay === '[DELETED]' ? 'italic' : 'normal'}}>
+                      {fileDisplay}
                     </td>
                     <td className="bl-hash-cell">
                       <div className="hash-line" style={{color: isCorruptedRow ? '#ef4444' : ''}}>
-                        CUR: <span className={isCorruptedRow ? '' : 'hash-prefix'}>{block.block_hash.substring(0, 16)}</span>
-                        <span className={isCorruptedRow ? '' : 'hash-suffix'}>{block.block_hash.substring(16, 24)}...</span>
+                        CUR: <span className={isCorruptedRow ? '' : 'hash-prefix'}>{(block.block_hash || '').substring(0, 16)}</span>
+                        <span className={isCorruptedRow ? '' : 'hash-suffix'}>{(block.block_hash || '').substring(16, 24)}...</span>
                       </div>
                       <div className="hash-line" style={{color: isNextRow ? '#ef4444' : ''}}>
                         PRV: {isGenesis ? <span className="genesis-tag">0000000000000000...</span> : 
-                        <><span className={isNextRow ? '' : 'hash-prefix prev'}>{block.prev_hash.substring(0, 16)}</span>
-                        <span className={isNextRow ? '' : 'hash-suffix'}>{block.prev_hash.substring(16, 24)}...</span></>}
+                        <><span className={isNextRow ? '' : 'hash-prefix prev'}>{(block.prev_hash || '').substring(0, 16)}</span>
+                        <span className={isNextRow ? '' : 'hash-suffix'}>{(block.prev_hash || '').substring(16, 24)}...</span></>
+                        }
                         {isNextRow && <span style={{marginLeft: '5px', fontSize:'12px'}}>⚠️ MISMATCH</span>}
                       </div>
                     </td>
@@ -496,9 +495,8 @@ export default function BlockchainLedger() {
           letter-spacing: 1px;
         }
         .rt-SYSTEM_INIT { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; border: 1px solid rgba(139, 92, 246, 0.3); }
-        .rt-FILE_SHARE { background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
-        .rt-ACCESS_RIGHT { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
-        .rt-FILE_UPLOAD { background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .rt-GRANT_ACCESS { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .rt-REVOKE_ACCESS { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
         
         .bl-user-cell {
           font-weight: 700;

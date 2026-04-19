@@ -31,7 +31,8 @@ def track_click():
     event_type = data.get('event_type', 'CLICK')
     element_id = data.get('element_id', 'UNKNOWN')
     url_route = data.get('url_route', '/')
-    ip_address = request.remote_addr or '127.0.0.1'
+    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr or "127.0.0.1")
+    if ',' in ip_address: ip_address = ip_address.split(',')[0].strip()
     
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -56,19 +57,18 @@ def get_clickstream_logs():
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT c.id, c.user_id, c.session_token, c.event_type, c.element_id, c.url_route, c.ip_address, c.timestamp, u.numeric_id
+        SELECT c.id, c.user_id, c.session_token, c.event_type, c.element_id, c.url_route, c.ip_address, c.timestamp, u.numeric_id, u.phone_number
         FROM clickstream_logs c
-        LEFT JOIN users u ON (c.user_id = u.phone_number OR c.user_id = u.numeric_id)
+        LEFT JOIN users u ON (c.user_id = u.phone_number OR c.user_id = u.numeric_id OR c.user_id = u.id)
         
         UNION ALL
         
-        SELECT a.id, a.actor_identity as user_id, 'NONE' as session_token, 'LOGIN' as event_type, a.action as element_id, '/login' as url_route, 'UNKNOWN' as ip_address, a.timestamp, u.numeric_id
+        SELECT a.id, a.actor_identity as user_id, 'NONE' as session_token, a.action as event_type, a.action as element_id, '/login' as url_route, 'UNKNOWN' as ip_address, a.timestamp, u.numeric_id, u.phone_number
         FROM activity_logs a
-        LEFT JOIN users u ON (a.actor_identity = u.phone_number OR a.actor_identity = u.numeric_id)
-        WHERE a.action = 'LOGIN'
+        LEFT JOIN users u ON (a.actor_identity = u.phone_number OR a.actor_identity = u.numeric_id OR a.actor_identity = u.id)
+        WHERE a.action IN ('LOGIN', 'USER_LOGIN_SUCCESS')
         
         ORDER BY timestamp DESC
-        LIMIT 500
     ''')
     
     logs = [dict(row) for row in cursor.fetchall()]

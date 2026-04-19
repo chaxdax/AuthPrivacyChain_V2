@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const ADMIN_TOKEN = 'admin-bypass';
-const API = (import.meta.env.VITE_API_URL || '${import.meta.env.VITE_API_URL || }');
+const API = 'http://127.0.0.1:5000';
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
 interface ClickStreamLog {
@@ -15,6 +15,7 @@ interface ClickStreamLog {
   ip_address: string;
   timestamp: string;
   numeric_id?: string;
+  phone_number?: string;
 }
 
 const formatDelhiTime = (utcDateStr: any) => {
@@ -49,7 +50,7 @@ export default function ClickStreamTracker() {
 
   useEffect(() => {
     fetchLogs();
-    const interval = setInterval(fetchLogs, 10000); // Auto-refresh every 10s
+    const interval = setInterval(fetchLogs, 3000); // Stable 3s pulse
     return () => clearInterval(interval);
   }, []);
 
@@ -130,24 +131,34 @@ export default function ClickStreamTracker() {
             </tr>
           </thead>
           <tbody>
-            {loading && logs.length === 0 ? (
-              <tr><td colSpan={7} className="cs-empty">Initializing Tracking Matrix...</td></tr>
+            {(loading && logs.length === 0) ? (
+              <tr>
+                <td colSpan={7} className="cs-empty">
+                  <div className="sync-loader">
+                    <span className="sync-icon">⚡</span>
+                    <span className="sync-text">INSTANT SYNC ACTIVE...</span>
+                  </div>
+                </td>
+              </tr>
             ) : filteredLogs.length === 0 ? (
-              <tr><td colSpan={7} className="cs-empty">No tracking data found matching criteria.</td></tr>
+              <tr><td colSpan={7} className="cs-empty">No clickstream records found in this vector.</td></tr>
             ) : (
-              filteredLogs.map(log => (
+              filteredLogs.map((log) => (
                 <tr key={log.id} className="cs-row">
                   <td className="cs-id-cell">{log.id.substring(0, 8)}...</td>
                   <td className="cs-time-cell">{formatDelhiTime(log.timestamp)}</td>
                   <td className="cs-user-cell">
-                    {log.user_id !== 'ADM-777' && log.numeric_id && (
-                      <div style={{color: '#8b5cf6', fontSize: '10px', marginBottom: '2px'}}>ID: {log.numeric_id}</div>
+                    <div style={{ fontWeight: 'bold', color: log.user_id === 'ADM-777' ? '#fff' : '#8b5cf6' }}>
+                      {log.numeric_id || log.user_id}
+                    </div>
+                    {log.phone_number && (
+                      <div style={{color: '#9ca3af', fontSize: '10px', marginTop: '2px'}}>
+                        📞 {log.phone_number}
+                      </div>
                     )}
-                    <div>{log.user_id}</div>
                   </td>
                   <td>
-
-                    <span className="cs-badge" style={{ borderColor: getEventColor(log.event_type), color: getEventColor(log.event_type) }}>
+                    <span className="cs-badge" style={{ background: getEventColor(log.event_type) + '22', color: getEventColor(log.event_type), borderColor: getEventColor(log.event_type) }}>
                       {log.event_type}
                     </span>
                   </td>
@@ -401,6 +412,9 @@ export default function ClickStreamTracker() {
           color: #6b7280 !important;
           font-style: italic;
         }
+        .sync-loader { display: flex; flex-direction: column; align-items: center; gap: 15px; }
+        .sync-icon { font-size: 32px; animation: spin 2s linear infinite; display: inline-block; }
+        .sync-text { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #6366f1; }
         
         @keyframes pulse {
           0% { opacity: 1; transform: scale(1); }

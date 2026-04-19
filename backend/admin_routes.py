@@ -27,116 +27,116 @@ def admin_required(f):
 @admin_bp.route('/admin/forensic-stats', methods=['GET'])
 @admin_required
 def forensic_stats():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total_users = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM files")
-    total_files = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM files")
+        total_files = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM files WHERE is_encrypted=1")
-    encrypted_files = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM files WHERE is_encrypted=1")
+        encrypted_files = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM activity_logs WHERE action='LOGIN'")
-    total_logins = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM activity_logs WHERE action IN ('LOGIN', 'USER_LOGIN_SUCCESS')")
+        total_logins = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE resolved=0")
-    active_alerts = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM alerts WHERE resolved=0")
+        active_alerts = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE severity='HIGH'")
-    high_severity = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM alerts WHERE severity='HIGH'")
+        high_severity = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM recovery_requests WHERE status='PENDING'")
-    pending_recovery = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM recovery_requests WHERE status='PENDING'")
+        pending_recovery = cursor.fetchone()[0]
 
-    cursor.execute('''
-        SELECT actor_identity, action, target_name, timestamp
-        FROM activity_logs
-        ORDER BY timestamp DESC
-        LIMIT 8
-    ''')
-    recent_logs = [
-        {"actor": r[0], "action": r[1], "target": r[2], "timestamp": r[3]}
-        for r in cursor.fetchall()
-    ]
+        cursor.execute('''
+            SELECT actor_identity, action, target_name, timestamp
+            FROM activity_logs
+            ORDER BY timestamp DESC
+        ''')
+        recent_logs = [
+            {"actor": r[0], "action": r[1], "target": r[2], "timestamp": r[3]}
+            for r in cursor.fetchall()
+        ]
 
-    # Live threats — join with users to get numeric_id
-    cursor.execute('''
-        SELECT a.id, a.actor_ip, a.file_id, a.severity, a.alert_message, a.timestamp, u.numeric_id
-        FROM alerts a
-        LEFT JOIN users u ON a.owner_id = u.id
-        WHERE a.resolved=0
-        ORDER BY a.timestamp DESC
-        LIMIT 5
-    ''')
-    live_threats = [
-        {"alert_id": r[0], "ip": r[1], "file_id": r[2] if r[2] else "N/A",
-         "severity": r[3], "message": r[4], "timestamp": r[5],
-         "user_id": r[6] or "UNKNOWN"}
-        for r in cursor.fetchall()
-    ]
+        # Live threats — join with users to get numeric_id
+        cursor.execute('''
+            SELECT a.id, a.actor_ip, a.file_id, a.severity, a.alert_message, a.timestamp, u.numeric_id
+            FROM alerts a
+            LEFT JOIN users u ON a.owner_id = u.id
+            WHERE a.resolved=0
+            ORDER BY a.timestamp DESC
+        ''')
+        live_threats = [
+            {"alert_id": r[0], "ip": r[1], "file_id": r[2] if r[2] else "N/A",
+             "severity": r[3], "message": r[4], "timestamp": r[5],
+             "user_id": r[6] or "UNKNOWN"}
+            for r in cursor.fetchall()
+        ]
 
-    # Users list — show name, fallback to numeric_id label if no name stored
-    cursor.execute("SELECT numeric_id, 'Unknown' as legal_name, phone_number FROM users ORDER BY rowid DESC")
-    users_list = [
-        {
-            "numeric_id": r[0],
-            "name": r[1].strip() if r[1] and r[1].strip() else "(name not on file)",
-            "phone": r[2][:4] + "****" + r[2][-2:] if r[2] and len(r[2]) > 6 else "****"
-        }
-        for r in cursor.fetchall()
-    ]
+        # Users list — show name, fallback to numeric_id label if no name stored
+        cursor.execute("SELECT numeric_id, legal_name, phone_number FROM users ORDER BY rowid DESC")
+        users_list = [
+            {
+                "numeric_id": r[0],
+                "name": r[1] if r[1] and r[1].strip() else "(name not on file)",
+                "phone": r[2][:4] + "****" + r[2][-2:] if r[2] and len(r[2]) > 6 else "****"
+            }
+            for r in cursor.fetchall()
+        ]
 
-    # Files list — only file_id + encryption status (no filename for privacy)
-    cursor.execute("SELECT id, is_encrypted FROM files ORDER BY rowid DESC LIMIT 20")
-    files_list = [
-        {
-            "file_id": r[0],
-            "encrypted": bool(r[1])
-        }
-        for r in cursor.fetchall()
-    ]
+        # Files list — only file_id + encryption status (no filename for privacy)
+        cursor.execute("SELECT id, is_encrypted FROM files ORDER BY rowid DESC")
+        files_list = [
+            {
+                "file_id": r[0],
+                "encrypted": bool(r[1])
+            }
+            for r in cursor.fetchall()
+        ]
 
-    # Keep connection open for the config query
-    blockchain_integrity = "INTACT" if total_files == encrypted_files or total_files == 0 else "PARTIAL"
+        blockchain_integrity = "INTACT" if total_files == encrypted_files or total_files == 0 else "PARTIAL"
 
-    # Score deductions with reasons (blockchain partial does NOT affect score)
-    score_deductions = []
-    security_score = 100
-    if active_alerts > 0:
-        deduct = min(active_alerts * 5, 30)
-        security_score -= deduct
-        score_deductions.append(f"-{deduct} pts: {active_alerts} unresolved alert(s) — go to Active Alerts and resolve them")
-    if pending_recovery > 0:
-        deduct = min(pending_recovery * 3, 15)
-        security_score -= deduct
-        score_deductions.append(f"-{deduct} pts: {pending_recovery} pending recovery request(s) — approve or reject them")
+        score_deductions = []
+        security_score = 100
+        if active_alerts > 0:
+            deduct = min(active_alerts * 5, 30)
+            security_score -= deduct
+            score_deductions.append(f"-{deduct} pts: {active_alerts} unresolved alert(s)")
+        if pending_recovery > 0:
+            deduct = min(pending_recovery * 3, 15)
+            security_score -= deduct
+            score_deductions.append(f"-{deduct} pts: {pending_recovery} pending recovery request(s)")
 
-    cursor.execute("SELECT value FROM system_config WHERE key='LOCKDOWN'")
-    ld_row = cursor.fetchone()
-    system_lockdown = bool(ld_row and ld_row[0] == '1')
-    conn.close()
+        cursor.execute("SELECT value FROM system_config WHERE key='LOCKDOWN'")
+        ld_row = cursor.fetchone()
+        system_lockdown = bool(ld_row and ld_row[0] == '1')
+        conn.close()
 
-    return jsonify({
-        "system_lockdown": system_lockdown,
-        "security_score": max(security_score, 0),
-        "score_deductions": score_deductions,
-        "blockchain_integrity": blockchain_integrity,
-        "total_users": total_users,
-        "total_files": total_files,
-        "encrypted_files": encrypted_files,
-        "total_logins": total_logins,
-        "active_alerts": active_alerts,
-        "high_severity_alerts": high_severity,
-        "pending_recovery_requests": pending_recovery,
-        "recent_activity": recent_logs,
-        "live_threats": live_threats,
-        "users_list": users_list,
-        "files_list": files_list,
-        "scan_timestamp": datetime.datetime.utcnow().isoformat() + "Z"
-    })
+        return jsonify({
+            "system_lockdown": system_lockdown,
+            "security_score": max(security_score, 0),
+            "score_deductions": score_deductions,
+            "blockchain_integrity": blockchain_integrity,
+            "total_users": total_users,
+            "total_files": total_files,
+            "encrypted_files": encrypted_files,
+            "total_logins": total_logins,
+            "active_alerts": active_alerts,
+            "high_severity_alerts": high_severity,
+            "pending_recovery_requests": pending_recovery,
+            "recent_activity": recent_logs,
+            "live_threats": live_threats,
+            "users_list": users_list,
+            "files_list": files_list,
+            "scan_timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+        })
+    except Exception as e:
+        print(f"Error in forensic_stats: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @admin_bp.route('/admin/emergency-lockdown', methods=['POST'])
@@ -213,8 +213,8 @@ def recovery_queue():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT rr.id as request_id, rr.user_id, 'N/A' as name_entered, rr.status, rr.timestamp,
-               u.numeric_id, u.phone_number as phone, 'N/A' as name_in_db, 0 as name_match
+        SELECT rr.id as request_id, rr.user_id, rr.name_entered, rr.status, rr.timestamp,
+               u.numeric_id, u.phone_number as phone, u.legal_name as name_in_db
         FROM recovery_requests rr
         LEFT JOIN users u ON rr.user_id = u.id
         ORDER BY rr.timestamp DESC
@@ -272,33 +272,6 @@ def reject_recovery(req_id):
     return jsonify({"message": "Recovery request REJECTED."}), 200
 
 
-# ─── MODULE 2: CLICK-STREAM TRACKER ──────────────────────────────────────────
-
-@admin_bp.route('/admin/clickstream-tracker-logs', methods=['GET'])
-@admin_required
-def clickstream_tracker_logs():
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT 
-            id, 
-            actor_identity AS user_id, 
-            action AS event_type, 
-            target_name AS element_id, 
-            '/api/v2/secure' AS url_route, 
-            '192.168.1.1' AS ip_address, 
-            timestamp, 
-            actor_identity AS numeric_id
-        FROM activity_logs
-        ORDER BY timestamp DESC
-        LIMIT 100
-    ''')
-    logs = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return jsonify(logs)
-
-
 # ─── MODULE 3: BLOCKCHAIN LEDGER VIEWER ──────────────────────────────────────
 
 @admin_bp.route('/admin/blockchain-ledger', methods=['GET'])
@@ -309,45 +282,39 @@ def blockchain_ledger():
     
     blocks_data = []
     
-    # 1. Fetch File Uploads
+    # Fetch ALL permission events (GRANT + REVOKE) — immutable, even if file is deleted
+    # LEFT JOIN on files so record persists when file is deleted by user
+    # LEFT JOIN on users for both owner and target to resolve numeric IDs
     cursor.execute('''
-        SELECT f.id, f.filename, f.is_encrypted, f.user_id, u.phone_number, u.numeric_id
-        FROM files f
-        LEFT JOIN users u ON f.user_id = u.id
-        ORDER BY f.id
+        SELECT
+            p.id,
+            p.file_id,
+            COALESCE(f.filename, '[DELETED]') as filename,
+            p.owner_id,
+            COALESCE(u_owner.numeric_id, p.owner_id) as owner_numeric_id,
+            p.shared_with_username,
+            COALESCE(u_target.numeric_id, p.shared_with_username) as target_numeric_id,
+            p.status,
+            COALESCE(f.is_encrypted, 0) as is_encrypted
+        FROM permissions p
+        LEFT JOIN files f ON p.file_id = f.id
+        LEFT JOIN users u_owner ON (p.owner_id = u_owner.phone_number OR p.owner_id = u_owner.numeric_id)
+        LEFT JOIN users u_target ON (p.shared_with_username = u_target.phone_number OR p.shared_with_username = u_target.numeric_id)
+        ORDER BY p.id ASC
     ''')
     rows = cursor.fetchall()
-    for r in rows:
-        blocks_data.append({
-            'type': 'FILE_UPLOAD',
-            'file_id': r[0],
-            'filename': r[1],
-            'encrypted': bool(r[2]),
-            'owner_numeric_id': r[5] or "UNKNOWN",
-            'target_user_id': "N/A"
-        })
-        
-    # 2. Fetch Access Grants (Permissions)
-    cursor.execute('''
-        SELECT p.file_id, p.shared_with_username, p.status, u.numeric_id, f.is_encrypted, t.numeric_id
-        FROM permissions p
-        LEFT JOIN users u ON (p.owner_id = u.phone_number OR p.owner_id = u.numeric_id)
-        LEFT JOIN users t ON (p.shared_with_username = t.phone_number OR p.shared_with_username = t.numeric_id)
-        LEFT JOIN files f ON p.file_id = f.id
-        ORDER BY p.id
-    ''')
-    perm_rows = cursor.fetchall()
-    for p in perm_rows:
-        blocks_data.append({
-            'type': 'ACCESS_RIGHT',
-            'file_id': p[0],
-            'filename': "ACCESS_RIGHT",
-            'encrypted': bool(p[4]),
-            'owner_numeric_id': p[3] or p.owner_id or "UNKNOWN",
-            'target_user_id': p[5] or p[1]
-        })
-        
     conn.close()
+    
+    for r in rows:
+        record_type = 'GRANT_ACCESS' if r[7] == 'ACTIVE' else 'REVOKE_ACCESS'
+        blocks_data.append({
+            'type': record_type,
+            'file_id': r[1],
+            'filename': r[2],
+            'owner_numeric_id': r[4] or 'UNKNOWN',
+            'target_user_id': r[6] or r[5],
+            'encrypted': bool(r[8])
+        })
 
     ledger = []
     prev_hash = "GENESIS"
@@ -358,6 +325,7 @@ def blockchain_ledger():
             "block_hash": block_hash[:16].upper(),
             "record_type": b['type'],
             "file_id": b['file_id'],
+            "filename": b['filename'],
             "encrypted": b['encrypted'],
             "owner_numeric_id": b['owner_numeric_id'],
             "target_user_id": b['target_user_id'],
@@ -376,14 +344,20 @@ def ip_threats():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT actor_ip, COUNT(*) as attempts, MAX(timestamp) as last_seen, severity
-        FROM alerts
-        GROUP BY actor_ip
+        SELECT a.actor_ip, COUNT(*) as attempts, MAX(a.timestamp) as last_seen, a.severity, u.numeric_id, a.country
+        FROM alerts a
+        LEFT JOIN users u ON a.owner_id = u.id
+        WHERE a.country IS NOT NULL
+          AND a.country != ''
+          AND a.country != 'IN'
+          AND a.actor_ip != '127.0.0.1'
+          AND a.actor_ip NOT LIKE '192.168.%'
+          AND a.actor_ip NOT LIKE '10.%'
+        GROUP BY a.actor_ip, u.numeric_id, a.country
         ORDER BY attempts DESC
-        LIMIT 50
     ''')
     threats = [
-        {"ip": r[0], "attempts": r[1], "last_seen": r[2], "severity": r[3]}
+        {"ip": r[0], "attempts": r[1], "last_seen": r[2], "severity": r[3], "user_id": r[4] or "ANONYMOUS", "country": r[5] or "Unknown"}
         for r in cursor.fetchall()
     ]
     conn.close()

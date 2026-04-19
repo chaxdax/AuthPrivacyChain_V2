@@ -24,6 +24,7 @@ function App() {
   const [recoveryName, setRecoveryName] = useState('');
   const [recoveryKey, setRecoveryKey] = useState('');
   const [ledgerFiles, setLedgerFiles] = useState<any[]>([]);
+  const [ledgerAlert, setLedgerAlert] = useState<{filename: string, owner: string} | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   // UPDATED: Added file_id to the type definition here
@@ -60,6 +61,91 @@ function App() {
     }
   }, []);
 
+  // Use refs to avoid re-binding listeners on every state change
+  const stateRef = React.useRef({ identity, token, role, view, activeTab });
+  useEffect(() => {
+    stateRef.current = { identity, token, role, view, activeTab };
+  }, [identity, token, role, view, activeTab]);
+
+  // GLOBAL API TRACKER: Records only MAJOR User API requests
+  useEffect(() => {
+    const requestInterceptor = axios.interceptors.request.use((config) => {
+      const { role: r, identity: id, token: t, view: v, activeTab: at } = stateRef.current;
+      if (r === 'admin') return config;
+      if (config.url?.includes('track-click')) return config;
+
+      const majorUserEndPoints = ['upload', 'encrypt', 'grant', 'revoke', 'resolve', 'recovery', 'decrypt', 'establish-link'];
+      const isMajor = majorUserEndPoints.some(ep => config.url?.toLowerCase().includes(ep));
+      if (!isMajor) return config;
+
+      const payload = {
+        user_id: id || 'ANONYMOUS',
+        session_token: t || 'NONE',
+        event_type: 'API_REQUEST',
+        element_id: `${config.method?.toUpperCase()} ${config.url?.split('/').pop()}`,
+        url_route: `/${v}/${at || ''}`.replace(/\/+/g, '/')
+      };
+      
+      axios.post('http://127.0.0.1:5000/track-click', payload).catch(() => {});
+      return config;
+    });
+
+    return () => axios.interceptors.request.eject(requestInterceptor);
+  }, []);
+
+  // GLOBAL CLICK-STREAM TRACKER: Stable listener that never misses a click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      const { role: r, identity: id, token: t, view: v, activeTab: at } = stateRef.current;
+      let target = e.target as HTMLElement;
+      
+      let depth = 0;
+      while (target && target.tagName !== 'BUTTON' && target.tagName !== 'DIV' && depth < 3) {
+        if (target.parentElement) target = target.parentElement;
+        depth++;
+      }
+
+      const label = (target.innerText?.trim() || target.getAttribute('aria-label') || target.id || target.tagName).substring(0, 40);
+      
+      if (r === 'admin') {
+        const majorAdminActions = [
+          'BLOCKCHAIN', 'LEDGER', 'CLICK-STREAM', 'TRACKER', 'GEOFENCING',
+          'UNAUTHORIZED', 'LOGS', 'MANAGEMENT', 'MASTER', 'DASHBOARD', 'LOGIN'
+        ];
+        const isMajor = majorAdminActions.some(action => label.toUpperCase().includes(action));
+        if (!isMajor) return; 
+      }
+
+      const payload = {
+        user_id: id || (r === 'admin' ? 'ADM-777' : 'ANONYMOUS'),
+        session_token: t || 'NONE',
+        event_type: 'CLICK',
+        element_id: label,
+        url_route: `/${v}/${at || ''}`.replace(/\/+/g, '/')
+      };
+
+      axios.post('http://127.0.0.1:5000/track-click', payload).catch(() => {});
+    };
+
+    window.addEventListener('click', handleClick);
+
+    // RESPONSE INTERCEPTOR FOR GEOFENCING & LOCKDOWN
+    const responseInterceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response?.status === 403 && error.response?.data?.message?.includes('GEOFENCE_BLOCK')) {
+          setFullScreenAlert(true); // Reuse the existing alert system
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return () => {
+      window.removeEventListener('click', handleClick);
+      axios.interceptors.response.eject(responseInterceptor);
+    };
+  }, []);
+
   const fetchLedgerFiles = async () => {
     try {
       const res = await axios.get('http://127.0.0.1:5000/public-ledger');
@@ -71,12 +157,13 @@ function App() {
 
   const handleHackAttempt = async (real_id: string) => {
     try {
-      await axios.post('http://127.0.0.1:5000/hack-attempt', { file_id: real_id });
+      const res = await axios.post('http://127.0.0.1:5000/hack-attempt', { file_id: real_id });
+      // Show red alert INSIDE the ledger window, NOT the VPN geofence alert
+      setLedgerAlert({ filename: res.data.filename || 'UNKNOWN_FILE', owner: res.data.owner_display || 'UNKNOWN' });
     } catch (error) {
       console.error("Hack attempt log failed", error);
+      setLedgerAlert({ filename: 'UNKNOWN_FILE', owner: 'UNKNOWN' });
     }
-    setFullScreenAlert(true);
-    setShowLedger(false);
   };
 
   useEffect(() => {
@@ -203,7 +290,11 @@ function App() {
       }
     } catch (error: any) { 
       console.error("Auth Error:", error);
-      alert(error.response?.data?.message || "Connection Failed! Is Flask running on port 5000?"); 
+      if (error.response?.status === 403) {
+        setFullScreenAlert(true);
+      } else {
+        alert(error.response?.data?.message || "Connection Failed! Is Flask running on port 5000?"); 
+      }
     }
   };
 
@@ -257,186 +348,279 @@ function App() {
 
   if (view === 'login' || view === 'signup') {
     return (
-      <div className="main-portal">
-        <div className="cyber-grid-bg"></div>
-        <button type="button" className="top-right-ledger-btn" onClick={() => setShowLedger(true)}>
-          <span className="pulse-dot"></span> LIVE NETWORK LEDGER
-        </button>
-        <div className="cloud-container">
-           <div className="asset-cloud c1">☁️</div>
-           <div className="asset-cloud c2">☁️</div>
-           <div className="asset-cloud c3">☁️</div>
-        </div>
-        {showMasterModal && (
-          <div className="master-modal-overlay">
-            <div className="master-modal-card">
-              <div className="modal-icon">🔐</div>
-              <h2>MASTER RECOVERY KEY</h2>
-              <div className="key-display">{generatedKey}</div>
-              <button onClick={() => { setShowMasterModal(false); setView('login'); setIdentity(''); setPassword(''); }} className="cyber-btn">I HAVE SAVED MY KEY</button>
+      <>
+        {fullScreenAlert && (
+          <div className="geofence-shield-overlay">
+            <div className="cyber-grid-red"></div>
+            <div className="cyber-grid-blue"></div>
+            <div className="laser-scanner-red"></div>
+            <div className="laser-scanner-blue"></div>
+            <div className="shield-container">
+              <div className="shield-glow-ring"></div>
+              <div className="shield-icon-wrap">
+                <img src={LOGO_PATH} alt="Security Logo" className="shield-main-icon-img" />
+                <div className="shield-scanner-line"></div>
+              </div>
+              <div className="shield-content">
+                <h1 className="shield-title">PERIMETER BREACH</h1>
+                <div className="shield-separator">
+                  <div className="sep-red"></div>
+                  <div className="sep-blue"></div>
+                </div>
+                <p className="shield-msg">
+                  <span className="glitch-text" data-text="ACCESS DENIED">ACCESS DENIED</span>
+                  <br />
+                  NODE LOCATION: <span style={{color: '#ef4444'}}>FOREIGN_ZONE</span>
+                  <br />
+                  Your connection was intercepted by the Indian Geographic Firewall.
+                </p>
+                <div className="forensic-meta">
+                  <div className="meta-item"><span className="m-label">PROTOCOL</span><span className="m-val">GEO-BLOCK</span></div>
+                  <div className="meta-item"><span className="m-label">ORIGIN</span><span className="m-val red">BLOCKED</span></div>
+                </div>
+                <button className="shield-dismiss-btn" onClick={() => setFullScreenAlert(false)}>
+                  ACKNOWLEDGE SECURITY PROTOCOL
+                </button>
+              </div>
             </div>
           </div>
         )}
         {showLedger && (
-          <div className="master-modal-overlay">
-            <div style={{ width: '90vw', maxWidth: '1000px', height: '80vh', background: '#080808', borderRadius: '30px', border: '1px solid #1a1a1a', padding: '40px', display: 'flex', flexDirection: 'column', textAlign: 'center' }}>
-              <div className="modal-icon" style={{fontSize: '40px', marginBottom: '10px'}}>🌐</div>
-              <h2 style={{fontFamily: "'Inter', sans-serif", letterSpacing: '2px', fontWeight: 900, margin: 0}}>PUBLIC NETWORK LEDGER</h2>
-              <p className="status-label" style={{color: '#2563eb', fontSize: '12px', fontWeight: 800, marginBottom: '30px', marginTop: '10px', letterSpacing: '1px'}}>REAL-TIME HACK SIMULATOR</p>
-              
-              <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'rgba(10, 10, 10, 0.4)', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.03)', textAlign: 'left' }}>
-                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', padding: '20px 30px', fontSize: '10px', color: '#2563eb', fontWeight: 900, borderBottom: '1px solid #111', letterSpacing: '2px' }}>
-                    <span>PAYLOAD_IDENTIFIER</span>
-                    <span style={{ textAlign: 'right' }}>COMMANDS</span>
-                 </div>
-                 <div style={{ flex: 1, overflowY: 'auto', padding: '15px' }}>
-                    {ledgerFiles.length === 0 ? (
-                        <div style={{ color: '#888', marginTop: '20px' }}>NO PAYLOADS DETECTED IN LEDGER</div>
-                    ) : (
-                        ledgerFiles.map((file, idx) => (
-                            <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', alignItems: 'center', padding: '22px 25px', background: 'rgba(255,255,255,0.01)', border: '1px solid #0a0a0a', marginBottom: '10px', borderRadius: '18px' }}>
-                               <div style={{ color: '#fff', fontSize: '14px', fontFamily: 'monospace' }}>📄 Block: {file.fake_id} - ENCRYPTED PAYLOAD</div>
-                               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                                  <button onClick={() => handleHackAttempt(file.real_id)} style={{ background: '#000', border: '1px solid #ef4444', color: '#ef4444', padding: '10px 18px', borderRadius: '10px', fontSize: '10px', cursor: 'pointer', fontWeight: 800, transition: '0.3s' }}>DECRYPT</button>
-                               </div>
-                            </div>
-                        ))
-                    )}
-                 </div>
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 99999,
+            background: '#080808',
+            display: 'flex', flexDirection: 'column',
+            fontFamily: 'sans-serif'
+          }}>
+            {/* INFILTRATION ALERT POPUP */}
+            {ledgerAlert && (
+              <div style={{
+                position: 'absolute', top: '30px', left: '50%', transform: 'translateX(-50%)',
+                zIndex: 100001, background: '#0a0000', border: '2px solid #ef4444',
+                borderRadius: '20px', padding: '30px 40px', minWidth: '480px',
+                boxShadow: '0 0 80px rgba(239,68,68,0.4)', textAlign: 'center',
+                animation: 'shake 0.3s ease'
+              }}>
+                <div style={{fontSize: '40px', marginBottom: '10px'}}>🚨</div>
+                <div style={{color: '#ef4444', fontSize: '16px', fontWeight: 900, letterSpacing: '3px', marginBottom: '12px'}}>INFILTRATION INTERCEPTED</div>
+                <div style={{color: '#666', fontSize: '12px', lineHeight: 2, fontWeight: 600}}>
+                  File <span style={{color: '#fff', fontWeight: 800}}>'{ledgerAlert.filename}'</span> targeted<br/>
+                  Owner <span style={{color: '#ef4444', fontWeight: 800}}>#{ledgerAlert.owner}</span> has been alerted<br/>
+                  <span style={{color: '#333', fontSize: '11px'}}>Admin has been notified. Attempt logged.</span>
+                </div>
+                <button onClick={() => setLedgerAlert(null)} style={{
+                  marginTop: '20px', background: '#ef4444', color: '#fff', border: 'none',
+                  padding: '12px 32px', borderRadius: '14px', fontWeight: 800, cursor: 'pointer',
+                  fontSize: '11px', letterSpacing: '2px'
+                }}>ACKNOWLEDGE</button>
               </div>
-              <button onClick={() => setShowLedger(false)} style={{ marginTop: '30px', background: '#111', color: '#444', border: '1px solid #222', borderRadius: '14px', padding: '15px', fontSize: '11px', fontWeight: 800, cursor: 'pointer' }}>CLOSE TERMINAL</button>
+            )}
+
+            {/* HEADER */}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '28px 48px', borderBottom: '1px solid #1a1a1a'
+            }}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+                <span style={{fontSize: '22px'}}>🌐</span>
+                <div>
+                  <div style={{color: '#2563eb', fontSize: '11px', fontWeight: 900, letterSpacing: '3px'}}>// LIVE NETWORK LEDGER</div>
+                  <div style={{color: '#fff', fontSize: '22px', fontWeight: 900, letterSpacing: '-0.5px'}}>PUBLIC NODE DIRECTORY</div>
+                </div>
+                <div style={{marginLeft: '24px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                  <span style={{width: '8px', height: '8px', borderRadius: '50%', background: '#2563eb', display: 'inline-block', animation: 'pulse 1.5s infinite'}}></span>
+                  <span style={{color: '#2563eb', fontSize: '10px', fontWeight: 900, letterSpacing: '1px'}}>{ledgerFiles.length} NODES ONLINE</span>
+                </div>
+              </div>
+              <button onClick={() => { setShowLedger(false); setLedgerAlert(null); }} style={{
+                background: '#111', border: '1px solid #222',
+                color: '#666', cursor: 'pointer', fontSize: '18px', borderRadius: '14px',
+                width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontWeight: 800
+              }}>✖</button>
             </div>
+
+            {/* TABLE HEADER */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '150px 1fr 200px 160px',
+              padding: '14px 48px', borderBottom: '1px solid #111',
+              fontSize: '9px', color: '#2563eb', fontWeight: 900, letterSpacing: '2px'
+            }}>
+              <span>NODE_ID</span>
+              <span>ENCRYPTED_FILENAME</span>
+              <span>STATUS</span>
+              <span style={{textAlign: 'right'}}>ACTION</span>
+            </div>
+
+            {/* FILE ROWS */}
+            <div style={{flex: 1, overflowY: 'auto', padding: '12px 36px'}}>
+              {(!ledgerFiles || ledgerFiles.length === 0) ? (
+                <div style={{textAlign: 'center', color: '#333', marginTop: '80px', fontSize: '12px', fontWeight: 700, letterSpacing: '2px'}}>
+                  // NO_PUBLIC_NODES_DETECTED_IN_SECTOR
+                </div>
+              ) : (
+                ledgerFiles.map((file, i) => (
+                  <div key={file.id || i} style={{
+                    display: 'grid', gridTemplateColumns: '150px 1fr 200px 160px',
+                    alignItems: 'center', padding: '20px 12px',
+                    borderRadius: '18px', marginBottom: '8px',
+                    background: 'rgba(255,255,255,0.01)',
+                    border: '1px solid #111',
+                  }}>
+                    <span style={{color: '#2563eb', fontSize: '11px', fontFamily: 'monospace', fontWeight: 900}}>{file.fake_id || '#UNKNOWN'}</span>
+                    <div>
+                      <div style={{color: '#fff', fontSize: '13px', fontWeight: 700}}>{'■'.repeat(Math.min(file.filename?.length || 8, 12))} [ENCRYPTED]</div>
+                      <div style={{color: '#333', fontSize: '10px', marginTop: '4px', fontWeight: 700, letterSpacing: '1px'}}>AES-256 • {file.filename?.split('.').pop()?.toUpperCase() || 'BIN'}</div>
+                    </div>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <span style={{width: '6px', height: '6px', borderRadius: '50%', background: '#2563eb', display: 'inline-block'}}></span>
+                      <span style={{color: '#2563eb', fontSize: '10px', fontWeight: 900, letterSpacing: '1px'}}>SECURED_NODE</span>
+                    </div>
+                    <div style={{display: 'flex', justifyContent: 'flex-end'}}>
+                      <button onClick={() => handleHackAttempt(file.id)} style={{
+                        background: 'none', border: '1px solid #ef4444',
+                        color: '#ef4444', padding: '10px 20px', borderRadius: '14px',
+                        fontSize: '10px', fontWeight: 800, cursor: 'pointer',
+                        letterSpacing: '1px'
+                      }}>INFILTRATE</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* FOOTER */}
+            <div style={{
+              padding: '18px 48px', borderTop: '1px solid #111',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <span style={{color: '#1f1f1f', fontSize: '10px', fontWeight: 700, letterSpacing: '1px'}}>AuthPrivacyChain V2 • Quantum-Secured Network</span>
+              <span style={{color: '#1f1f1f', fontSize: '10px', fontWeight: 700, letterSpacing: '1px'}}>All infiltration attempts are logged and reported</span>
+            </div>
+
+            <style>{`
+              @keyframes shake { 0%,100%{transform:translateX(-50%)} 20%{transform:translateX(calc(-50% - 8px))} 40%{transform:translateX(calc(-50% + 8px))} 60%{transform:translateX(calc(-50% - 4px))} 80%{transform:translateX(calc(-50% + 4px))} }
+              @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+            `}</style>
           </div>
         )}
-        {showRecoveryModal && (
-          <div className="master-modal-overlay">
-            <form className="master-modal-card" onSubmit={handleMasterRecoverySubmit}>
-              <div className="modal-icon">🛡️</div>
-              <h2 style={{fontFamily: "'Inter', sans-serif"}}>EMERGENCY RECOVERY</h2>
-              <p className="status-label">SUBMIT REQUEST TO ADMIN</p>
-              <div className="cyber-field" style={{textAlign: 'left', marginTop: '20px'}}>
-                <label>FULL NAME</label>
-                <input type="text" placeholder="Enter Name..." value={recoveryName} onChange={(e) => setRecoveryName(e.target.value)} required />
+
+        <div className="main-portal">
+          <div className="cyber-grid-bg"></div>
+          <button type="button" className="top-right-ledger-btn" onClick={() => setShowLedger(true)}>
+            <span className="pulse-dot"></span> LIVE NETWORK LEDGER
+          </button>
+          <div className="cloud-container">
+            <div className="asset-cloud c1">☁️</div>
+            <div className="asset-cloud c2">☁️</div>
+            <div className="asset-cloud c3">☁️</div>
+          </div>
+
+          <div className="auth-card">
+            <div className="logo-center-box"><img src={LOGO_PATH} alt="Brand Logo" className="brand-logo-main" /></div>
+            <h1>AuthPrivacyChain <span>V2</span></h1>
+            <p className="status-label">QUANTUM GATEWAY ACTIVE</p>
+
+            <div className="toggle-switcher">
+              <div className={`switch-pill ${role === 'admin' ? 'pos-admin' : 'pos-user'}`}></div>
+              <button type="button" className={role === 'user' ? 'active' : ''} onClick={() => { setRole('user'); setIdentity(''); setPassword(''); }}>USER GATEWAY</button>
+              <button type="button" className={role === 'admin' ? 'active' : ''} onClick={() => { setRole('admin'); setIdentity(''); setPassword(''); }}>ADMIN MODE</button>
+            </div>
+
+            <form onSubmit={handleAction}>
+              {view === 'signup' && (
+                <div className="cyber-field">
+                  <label>FULL LEGAL IDENTITY</label>
+                  <input type="text" placeholder="Enter Name..." required value={legalName} onChange={(e) => setLegalName(e.target.value)} autoComplete="off" />
+                </div>
+              )}
+              <div className="cyber-field">
+                <label>{role === 'admin' ? 'ADMINISTRATOR TOKEN' : (view === 'signup' ? 'PHONE NUMBER' : 'UNIQUE ID')}</label>
+                <input type="text" placeholder={role === 'admin' ? "ADM-777" : "Enter ID..."} required value={identity} onChange={(e) => setIdentity(e.target.value)} autoComplete="off" />
               </div>
-              <div className="cyber-field" style={{textAlign: 'left'}}>
-                <label>MASTER KEY</label>
-                <input type="text" placeholder="XXXX-XXXX-XXXX-XXXX" value={recoveryKey} onChange={(e) => setRecoveryKey(e.target.value)} required />
+              <div className="cyber-field">
+                <label>ENCRYPTION PASSPHRASE</label>
+                <input type="password" placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
               </div>
-              <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
-                 <button type="button" className="cyber-btn" style={{background: '#333', color: '#fff'}} onClick={() => setShowRecoveryModal(false)}>CANCEL</button>
-                 <button type="submit" className="cyber-btn">SUBMIT REQUEST</button>
+              <button type="submit" className="cyber-btn">{view === 'login' ? 'ESTABLISH LINK' : 'CREATE ACCOUNT'}</button>
+              <div className="auth-footer-links">
+                <button type="button" className="signup-link" onClick={() => { setView(view === 'login' ? 'signup' : 'login'); setIdentity(''); setPassword(''); }}>
+                  {view === 'login' ? '// New here? Join the family.' : '// Back to Login'}
+                </button>
+                <button type="button" className="v1-shortcut" onClick={() => setShowRecoveryModal(true)}>[ MASTER KEY ] QUICK ACCESS</button>
               </div>
             </form>
           </div>
-        )}
-        {fullScreenAlert && (
-          <div className="denied-overlay" style={{ position: 'fixed', inset: 0, zIndex: 99999, background: '#080000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div className="cyber-grid-bg-red"></div>
-            <div className="denied-card">
-              <div className="denied-icon">🛑</div>
-              <h1 className="denied-title">CRITICAL HACK ATTEMPT</h1>
-              <div className="denied-divider"></div>
-              <p className="denied-text">
-                Unauthorized decryption attempt intercepted. Node connection has been forcibly severed.
-              </p>
-              <div className="denied-status-box">
-                 <span>TARGET: BLOCKCHAIN PAYLOAD</span>
-                 <span>STATUS: BLOCKED & LOGGED</span>
-              </div>
-              <button className="denied-btn" onClick={() => setFullScreenAlert(false)}>
-                DISMISS WARNING
-              </button>
-            </div>
-          </div>
-        )}
-        <div className="auth-card">
-          <header className="auth-header">
-            <div className="logo-center-box"><img src={LOGO_PATH} alt="APC Logo" className="brand-logo-main" /></div>
-            <h1>AuthPrivacyChain <span>V2</span></h1>
-            <p className="status-label">QUANTUM GATEWAY ACTIVE</p>
-          </header>
-          <div className="toggle-switcher">
-            <button type="button" onClick={() => setRole('user')} className={role === 'user' ? 'active' : ''}>USER GATEWAY</button>
-            <button type="button" onClick={() => setRole('admin')} className={role === 'admin' ? 'active' : ''}>ADMIN NODE</button>
-            <div className={`switch-pill ${role === 'admin' ? 'pos-admin' : 'pos-user'}`}></div>
-          </div>
-          <form onSubmit={handleAction} className="form-cyber">
-            {view === 'signup' && (
-              <div className="cyber-field">
-                <label>FULL LEGAL IDENTITY</label>
-                <input type="text" placeholder="Enter Name..." required value={legalName} onChange={(e) => setLegalName(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck="false" />
-              </div>
-            )}
-            <div className="cyber-field">
-              <label>{role === 'admin' ? 'ADMINISTRATOR TOKEN' : (view === 'signup' ? 'PHONE NUMBER (SMS VERIFICATION)' : 'UNIQUE ID')}</label>
-              <input type="text" placeholder={role === 'admin' ? "ADM-777" : (view === 'signup' ? "+91 " : "Enter Unique ID...")} required value={identity} autoComplete="off" autoCorrect="off" spellCheck="false" onChange={(e) => {
-                let val = e.target.value;
-                if (view === 'signup' && role === 'user' && !val.startsWith('+91')) {
-                   val = '+91 ' + val.replace(/^\+?9?1?\s?/, '');
-                }
-                setIdentity(val);
-              }} />
-            </div>
-            <div className="cyber-field">
-              <label>ENCRYPTION PASSPHRASE</label>
-              <input type="password" placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck="false" />
-            </div>
-            <button type="submit" className="cyber-btn">{view === 'login' ? 'ESTABLISH LINK' : 'CREATE ACCOUNT'}</button>
-            <div className="auth-footer-links">
-              <button type="button" className="signup-link" onClick={() => {
-                setView(view === 'login' ? 'signup' : 'login');
-                setIdentity(view === 'login' ? '+91 ' : '');
-              }}>
-                {view === 'login' ? '// New here? Join the family.' : '// Back to Login'}
-              </button>
-              <button type="button" className="v1-shortcut" onClick={() => setShowRecoveryModal(true)}>[ MASTER KEY ] QUICK ACCESS</button>
-            </div>
-          </form>
+
+          <style>{`
+            .main-portal { min-height: 100vh; background: #02040a; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; font-family: sans-serif; }
+            .cyber-grid-bg { position: absolute; inset: 0; background-image: linear-gradient(rgba(37,99,235,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,0.12) 1px, transparent 1px); background-size: 50px 50px; z-index: 1; }
+            .cloud-container { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+            .asset-cloud { position: absolute; display: flex; align-items: center; justify-content: center; font-size: 280px; opacity: 0.8; user-select: none; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.5)); z-index: 5; }
+            .c1 { top: 5%; left: 5%; transform: rotate(-15deg); animation: float 12s infinite alternate ease-in-out; }
+            .c2 { bottom: 10%; right: 8%; font-size: 350px; transform: rotate(10deg); animation: float 18s infinite alternate-reverse ease-in-out; }
+            .c3 { top: 20%; right: 20%; font-size: 150px; opacity: 0.5; transform: rotate(5deg); animation: float 25s infinite alternate ease-in-out; }
+            @keyframes float { from { transform: translate(0, 0) rotate(-5deg); } to { transform: translate(30px, -20px) rotate(5deg); } }
+            .auth-card { width: 100%; max-width: 440px; background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.1); border-radius: 44px; padding: 55px; z-index: 10; text-align: center; color: white; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+            .logo-center-box { display: flex; justify-content: center; margin-bottom: 20px; }
+            .brand-logo-main { width: 90px; height: 90px; object-fit: contain; }
+            h1 { font-size: 26px; font-weight: 900; margin: 0; } h1 span { color: #3b82f6; }
+            .status-label { font-size: 9px; letter-spacing: 5px; color: #3b82f6; margin-bottom: 40px; font-weight: 900; }
+            .toggle-switcher { display: flex; background: #000; padding: 5px; border-radius: 18px; margin-bottom: 35px; border: 1px solid rgba(255,255,255,0.04); position: relative; }
+            .toggle-switcher button { flex: 1; padding: 12px; background: transparent; border: none; font-size: 10px; font-weight: 900; color: #4b5563; z-index: 2; cursor: pointer; }
+            .toggle-switcher button.active { color: #fff; }
+            .switch-pill { position: absolute; top: 5px; bottom: 5px; width: calc(50% - 5px); background: #2563eb; border-radius: 14px; transition: 0.5s; }
+            .pos-admin { left: 50%; } .pos-user { left: 5px; }
+            .cyber-field { text-align: left; margin-bottom: 22px; }
+            .cyber-field label { display: block; font-size: 9px; font-weight: 800; color: #64748b; margin-bottom: 10px; margin-left: 15px; }
+            .cyber-field input { width: 100%; padding: 18px 24px; border-radius: 20px; background: #000; border: 1px solid rgba(255,255,255,0.08); color: #fff; outline: none; box-sizing: border-box; }
+            .cyber-btn { width: 100%; padding: 18px; border-radius: 20px; border: none; background: #fff; color: #000; font-weight: 900; cursor: pointer; font-size: 11px; }
+            .auth-footer-links { margin-top: 25px; display: flex; flex-direction: column; gap: 12px; }
+            .signup-link, .v1-shortcut { background: none; border: none; font-size: 10px; font-weight: 900; cursor: pointer; }
+            .signup-link { color: #4b5563; } .v1-shortcut { color: #3b82f6; }
+            .master-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+            .master-modal-card { background: #0a0a0a; border: 2px solid #2563eb; padding: 40px; border-radius: 30px; text-align: center; max-width: 400px; color: white; }
+            .key-display { background: #000; color: #3b82f6; padding: 20px; font-family: monospace; border-radius: 10px; margin: 20px 0; border: 1px dashed #333; font-size: 18px; font-weight: bold; word-break: break-all; }
+            .top-right-ledger-btn { position: absolute; top: 30px; right: 40px; background: transparent; border: none; color: #22c55e; padding: 12px 24px; font-weight: 900; cursor: pointer; z-index: 100; font-size: 15px; letter-spacing: 1px; display: flex; align-items: center; }
+            .pulse-dot { display: inline-block; width: 12px; height: 12px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 10px #22c55e, 0 0 20px #22c55e; margin-right: 12px; animation: pulse-dot-anim 1.5s infinite; }
+            @keyframes pulse-dot-anim { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: 0.5; } 100% { transform: scale(1); opacity: 1; } }
+            
+            .geofence-shield-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10000000 !important; background: #000 !important; display: flex; align-items: center; justify-content: center; overflow: hidden; font-family: 'Inter', sans-serif; }
+            .cyber-grid-red { position: absolute; inset: 0; background-image: linear-gradient(rgba(239, 68, 68, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(239, 68, 68, 0.2) 1px, transparent 1px); background-size: 40px 40px; animation: grid-pulse-red 3s infinite alternate; z-index: 1; }
+            .cyber-grid-blue { position: absolute; inset: 0; background-image: linear-gradient(rgba(59, 130, 246, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(59, 130, 246, 0.2) 1px, transparent 1px); background-size: 45px 45px; animation: grid-pulse-blue 4s infinite alternate-reverse; z-index: 2; }
+            @keyframes grid-pulse-red { from { opacity: 0.2; transform: scale(1); } to { opacity: 0.6; transform: scale(1.05); } }
+            @keyframes grid-pulse-blue { from { opacity: 0.2; transform: scale(1); } to { opacity: 0.6; transform: scale(1.1); } }
+            .laser-scanner-red { position: absolute; width: 200%; height: 2px; background: rgba(239, 68, 68, 0.8); box-shadow: 0 0 20px #ef4444; top: 30%; left: -50%; transform: rotate(-5deg); animation: laser-scan-v 4s infinite linear; z-index: 5; }
+            .laser-scanner-blue { position: absolute; width: 200%; height: 2px; background: rgba(59, 130, 246, 0.8); box-shadow: 0 0 20px #3b82f6; top: 60%; left: -50%; transform: rotate(5deg); animation: laser-scan-v 5s infinite linear reverse; }
+            @keyframes laser-scan-v { 0% { top: -10%; } 100% { top: 110%; } }
+            .shield-container { position: relative; z-index: 30000000 !important; display: flex; flex-direction: column; align-items: center; gap: 30px; }
+            .shield-glow-ring { position: absolute; width: 400px; height: 400px; border: 2px solid rgba(59, 130, 246, 0.1); border-radius: 50%; animation: ring-pulse 2s infinite; }
+            @keyframes ring-pulse { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(1.5); opacity: 0; } }
+            .shield-icon-wrap { position: relative; width: 120px; height: 120px; background: rgba(255,255,255,0.03); border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 0 30px rgba(59,130,246,0.2); }
+            .shield-main-icon-img { width: 80px; height: 80px; object-fit: contain; filter: drop-shadow(0 0 20px rgba(59,130,246,0.8)); }
+            .shield-scanner-line { position: absolute; width: 100%; height: 2px; background: #3b82f6; box-shadow: 0 0 10px #3b82f6; top: 0; animation: scan-shield 2s infinite ease-in-out; }
+            @keyframes scan-shield { 0%, 100% { top: 10%; } 50% { top: 90%; } }
+            .shield-content { text-align: center; }
+            .shield-title { font-size: 42px; font-weight: 900; letter-spacing: 4px; margin: 0; color: #fff; text-shadow: 0 0 10px rgba(255,255,255,0.3); }
+            .shield-separator { display: flex; height: 4px; width: 100%; max-width: 300px; margin: 15px auto; }
+            .sep-red { flex: 1; background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+            .sep-blue { flex: 1; background: #3b82f6; box-shadow: 0 0 10px #3b82f6; }
+            .shield-msg { color: #888; font-size: 14px; line-height: 1.8; letter-spacing: 1px; }
+            .glitch-text { font-size: 24px; font-weight: 900; color: #ef4444; position: relative; display: inline-block; }
+            .glitch-text::before, .glitch-text::after { content: attr(data-text); position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+            .glitch-text::before { left: 2px; text-shadow: -2px 0 #3b82f6; animation: glitch 2s infinite linear alternate-reverse; }
+            .glitch-text::after { left: -2px; text-shadow: 2px 0 #ef4444; animation: glitch 3s infinite linear alternate-reverse; }
+            @keyframes glitch { 0% { clip: rect(44px, 450px, 56px, 0); } 20% { clip: rect(12px, 450px, 89px, 0); } 40% { clip: rect(67px, 450px, 34px, 0); } 60% { clip: rect(89px, 450px, 12px, 0); } 80% { clip: rect(34px, 450px, 67px, 0); } 100% { clip: rect(56px, 450px, 44px, 0); } }
+            .forensic-meta { display: flex; gap: 20px; justify-content: center; margin: 20px 0; }
+            .meta-item { display: flex; flex-direction: column; background: rgba(255,255,255,0.02); padding: 10px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
+            .m-label { font-size: 9px; color: #555; font-weight: 800; letter-spacing: 1px; }
+            .m-val { font-size: 12px; color: #fff; font-weight: 700; margin-top: 4px; }
+            .m-val.red { color: #ef4444; }
+            .shield-dismiss-btn { background: none; border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 12px 30px; border-radius: 4px; font-size: 11px; font-weight: 800; letter-spacing: 2px; cursor: pointer; transition: 0.3s; }
+            .shield-dismiss-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px rgba(255,255,255,0.3); }
+          `}</style>
         </div>
-        <style>{`
-          .main-portal { min-height: 100vh; background: #02040a; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; font-family: sans-serif; }
-          .cyber-grid-bg { position: absolute; inset: 0; background-image: linear-gradient(rgba(37,99,235,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,0.12) 1px, transparent 1px); background-size: 50px 50px; z-index: 1; }
-          .cloud-container { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
-          .asset-cloud { position: absolute; display: flex; align-items: center; justify-content: center; font-size: 280px; opacity: 0.8; user-select: none; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.5)); z-index: 5; }
-          .c1 { top: 5%; left: 5%; transform: rotate(-15deg); animation: float 12s infinite alternate ease-in-out; }
-          .c2 { bottom: 10%; right: 8%; font-size: 350px; transform: rotate(10deg); animation: float 18s infinite alternate-reverse ease-in-out; }
-          .c3 { top: 20%; right: 20%; font-size: 150px; opacity: 0.5; transform: rotate(5deg); animation: float 25s infinite alternate ease-in-out; }
-          @keyframes float { from { transform: translate(0, 0) rotate(-5deg); } to { transform: translate(30px, -20px) rotate(5deg); } }
-          .auth-card { width: 100%; max-width: 440px; background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.1); border-radius: 44px; padding: 55px; z-index: 10; text-align: center; color: white; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-          .logo-center-box { display: flex; justify-content: center; margin-bottom: 20px; }
-          .brand-logo-main { width: 90px; height: 90px; object-fit: contain; }
-          h1 { font-size: 26px; font-weight: 900; margin: 0; } h1 span { color: #3b82f6; }
-          .status-label { font-size: 9px; letter-spacing: 5px; color: #3b82f6; margin-bottom: 40px; font-weight: 900; }
-          .toggle-switcher { display: flex; background: #000; padding: 5px; border-radius: 18px; margin-bottom: 35px; border: 1px solid rgba(255,255,255,0.04); position: relative; }
-          .toggle-switcher button { flex: 1; padding: 12px; background: transparent; border: none; font-size: 10px; font-weight: 900; color: #4b5563; z-index: 2; cursor: pointer; }
-          .toggle-switcher button.active { color: #fff; }
-          .switch-pill { position: absolute; top: 5px; bottom: 5px; width: calc(50% - 5px); background: #2563eb; border-radius: 14px; transition: 0.5s; }
-          .pos-admin { left: 50%; } .pos-user { left: 5px; }
-          .cyber-field { text-align: left; margin-bottom: 22px; }
-          .cyber-field label { display: block; font-size: 9px; font-weight: 800; color: #64748b; margin-bottom: 10px; margin-left: 15px; }
-          .cyber-field input { width: 100%; padding: 18px 24px; border-radius: 20px; background: #000; border: 1px solid rgba(255,255,255,0.08); color: #fff; outline: none; box-sizing: border-box; }
-          .cyber-btn { width: 100%; padding: 18px; border-radius: 20px; border: none; background: #fff; color: #000; font-weight: 900; cursor: pointer; font-size: 11px; }
-          .auth-footer-links { margin-top: 25px; display: flex; flex-direction: column; gap: 12px; }
-          .signup-link, .v1-shortcut { background: none; border: none; font-size: 10px; font-weight: 900; cursor: pointer; }
-          .signup-link { color: #4b5563; } .v1-shortcut { color: #3b82f6; }
-          .master-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-          .master-modal-card { background: #0a0a0a; border: 2px solid #2563eb; padding: 40px; border-radius: 30px; text-align: center; max-width: 400px; color: white; }
-          .key-display { background: #000; color: #3b82f6; padding: 20px; font-family: monospace; border-radius: 10px; margin: 20px 0; border: 1px dashed #333; font-size: 18px; font-weight: bold; word-break: break-all; }
-          .top-right-ledger-btn { position: absolute; top: 30px; right: 40px; background: transparent; border: none; color: #22c55e; padding: 12px 24px; font-weight: 900; cursor: pointer; z-index: 100; font-size: 15px; letter-spacing: 1px; display: flex; align-items: center; }
-          .pulse-dot { display: inline-block; width: 12px; height: 12px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 10px #22c55e, 0 0 20px #22c55e; margin-right: 12px; animation: pulse-dot-anim 1.5s infinite; }
-          @keyframes pulse-dot-anim { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: 0.5; } 100% { transform: scale(1); opacity: 1; } }
-          .cyber-grid-bg-red { position: absolute; inset: 0; background-image: linear-gradient(rgba(255,0,0,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,0,0,0.1) 1px, transparent 1px); background-size: 40px 40px; }
-          .denied-card { z-index: 100; background: rgba(15, 0, 0, 0.95); border: 2px solid #ff0000; padding: 60px; border-radius: 40px; text-align: center; max-width: 480px; box-shadow: 0 0 50px rgba(255,0,0,0.2); border-bottom: 8px solid #ff0000; }
-          .denied-icon { font-size: 60px; margin-bottom: 20px; animation: pulse 1.5s infinite; }
-          .denied-title { color: #ff3333; font-weight: 900; letter-spacing: 2px; font-size: 24px; margin-bottom: 10px; }
-          .denied-divider { height: 1px; background: #ff0000; width: 50px; margin: 20px auto; opacity: 0.5; }
-          .denied-text { color: #888; line-height: 1.6; font-size: 14px; margin-bottom: 30px; }
-          .denied-status-box { background: #000; padding: 15px; border-radius: 12px; font-family: monospace; font-size: 10px; color: #555; text-align: left; margin-bottom: 30px; border: 1px solid #222; display: flex; flex-direction: column; gap: 5px; }
-          .denied-btn { width: 100%; padding: 18px; border-radius: 20px; border: 2px solid #ff3333; background: transparent; color: #ff3333; font-weight: 900; cursor: pointer; transition: 0.3s; }
-          .denied-btn:hover { background: #ff3333; color: #fff; }
-          @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        `}</style>
-      </div>
+      </>
     );
   }
 
@@ -558,7 +742,7 @@ function App() {
             <div className="floating-dock-sleek">
                 <div className="dock-items-wrapper">
                   {userModules.map(m => (
-                    <button key={m.name} onClick={() => setActiveTab(m.name)} className={activeTab === m.name ? 'dock-item-sleek active' : 'dock-item-sleek'}>
+                    <button key={m.name} onClick={() => setActiveTab(m.name)} className={activeTab === m.name ? 'dock-item-sleek active' : 'dock-item-sleek'} aria-label={m.name}>
                       <span className="dock-icon-sleek">{m.icon}</span>
                     </button>
                   ))}
@@ -602,6 +786,49 @@ function App() {
           .radar-circle { position: absolute; width: 300px; height: 300px; border: 1px solid rgba(37,99,235,0.1); border-radius: 50%; animation: radar 4s infinite linear; pointer-events: none; }
           @keyframes radar { 0% { transform: scale(0.6); opacity: 0; } 50% { opacity: 0.4; } 100% { transform: scale(1.8); opacity: 0; } }
           .btn-exit { margin-top: auto; padding: 15px; background: #111; color: #444; border: 1px solid #222; border-radius: 14px; font-size: 11px; font-weight: 800; cursor: pointer; }
+          .geofence-shield-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; z-index: 2000000 !important; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; font-family: 'Inter', sans-serif; }
+          
+          .cyber-grid-red { position: absolute; inset: 0; background-image: linear-gradient(rgba(239, 68, 68, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(239, 68, 68, 0.2) 1px, transparent 1px); background-size: 40px 40px; animation: grid-pulse-red 3s infinite alternate; z-index: 1; }
+          .cyber-grid-blue { position: absolute; inset: 0; background-image: linear-gradient(rgba(59, 130, 246, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(59, 130, 246, 0.2) 1px, transparent 1px); background-size: 45px 45px; animation: grid-pulse-blue 4s infinite alternate-reverse; z-index: 2; }
+          
+          @keyframes grid-pulse-red { from { opacity: 0.2; transform: scale(1); } to { opacity: 0.6; transform: scale(1.05); } }
+          @keyframes grid-pulse-blue { from { opacity: 0.2; transform: scale(1); } to { opacity: 0.6; transform: scale(1.1); } }
+
+          .laser-scanner-red { position: absolute; width: 200%; height: 2px; background: rgba(239, 68, 68, 0.8); box-shadow: 0 0 20px #ef4444; top: 30%; left: -50%; transform: rotate(-5deg); animation: laser-scan-v 4s infinite linear; z-index: 5; }
+          .laser-scanner-blue { position: absolute; width: 200%; height: 2px; background: rgba(59, 130, 246, 0.8); box-shadow: 0 0 20px #3b82f6; top: 60%; left: -50%; transform: rotate(5deg); animation: laser-scan-v 5s infinite linear reverse; }
+          
+          @keyframes laser-scan-v { 0% { top: -10%; } 100% { top: 110%; } }
+          
+          .shield-container { position: relative; z-index: 3000000 !important; display: flex; flex-direction: column; align-items: center; gap: 30px; }
+          .shield-glow-ring { position: absolute; width: 400px; height: 400px; border: 2px solid rgba(59, 130, 246, 0.1); border-radius: 50%; animation: ring-pulse 2s infinite; }
+          @keyframes ring-pulse { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(1.5); opacity: 0; } }
+          
+          .shield-icon-wrap { position: relative; width: 120px; height: 120px; background: rgba(255,255,255,0.03); border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 0 30px rgba(59,130,246,0.2); }
+          .shield-main-icon { font-size: 60px; filter: drop-shadow(0 0 10px rgba(59,130,246,0.5)); }
+          .shield-scanner-line { position: absolute; width: 100%; height: 2px; background: #3b82f6; box-shadow: 0 0 10px #3b82f6; top: 0; animation: scan-shield 2s infinite ease-in-out; }
+          @keyframes scan-shield { 0%, 100% { top: 10%; } 50% { top: 90%; } }
+          
+          .shield-content { text-align: center; }
+          .shield-title { font-size: 42px; font-weight: 900; letter-spacing: 4px; margin: 0; color: #fff; text-shadow: 0 0 10px rgba(255,255,255,0.3); }
+          .shield-separator { display: flex; height: 4px; width: 100%; max-width: 300px; margin: 15px auto; }
+          .sep-red { flex: 1; background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+          .sep-blue { flex: 1; background: #3b82f6; box-shadow: 0 0 10px #3b82f6; }
+          
+          .shield-msg { color: #888; font-size: 14px; line-height: 1.8; letter-spacing: 1px; }
+          .glitch-text { font-size: 24px; font-weight: 900; color: #ef4444; position: relative; display: inline-block; }
+          .glitch-text::before, .glitch-text::after { content: attr(data-text); position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+          .glitch-text::before { left: 2px; text-shadow: -2px 0 #3b82f6; animation: glitch 2s infinite linear alternate-reverse; }
+          .glitch-text::after { left: -2px; text-shadow: 2px 0 #ef4444; animation: glitch 3s infinite linear alternate-reverse; }
+          @keyframes glitch { 0% { clip: rect(44px, 450px, 56px, 0); } 20% { clip: rect(12px, 450px, 89px, 0); } 40% { clip: rect(67px, 450px, 34px, 0); } 60% { clip: rect(89px, 450px, 12px, 0); } 80% { clip: rect(34px, 450px, 67px, 0); } 100% { clip: rect(56px, 450px, 44px, 0); } }
+          
+          .forensic-meta { display: flex; gap: 20px; justify-content: center; margin: 20px 0; }
+          .meta-item { display: flex; flex-direction: column; background: rgba(255,255,255,0.02); padding: 10px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
+          .m-label { font-size: 9px; color: #555; font-weight: 800; letter-spacing: 1px; }
+          .m-val { font-size: 12px; color: #fff; font-weight: 700; margin-top: 4px; }
+          .m-val.red { color: #ef4444; }
+          
+          .shield-dismiss-btn { background: none; border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 12px 30px; border-radius: 4px; font-size: 11px; font-weight: 800; letter-spacing: 2px; cursor: pointer; transition: 0.3s; }
+          .shield-dismiss-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px rgba(255,255,255,0.3); }
         `}</style>
       </div>
     );

@@ -18,7 +18,7 @@ const formatDelhiTime = (utcDateStr: any) => {
 };
 
 const ADMIN_TOKEN = 'admin-bypass';
-const API = (import.meta.env.VITE_API_URL || '${import.meta.env.VITE_API_URL || }');
+const API = 'http://127.0.0.1:5000'; // Direct connection to local backend
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
 // --- INTERFACES ---
@@ -58,7 +58,7 @@ export default function MasterForensicDashboard() {
   // --- FETCHERS ---
   const fetchStats = useCallback(async () => {
     try { const res = await axios.get(`${API}/admin/forensic-stats`, { headers }); setStats(res.data); } 
-    catch { console.error('Failed to fetch forensic stats'); } 
+    catch (err) { console.error('Failed to fetch forensic stats:', err); } 
     finally { setLoading(false); }
   }, []);
 
@@ -97,12 +97,16 @@ export default function MasterForensicDashboard() {
 
   useEffect(() => {
     fetchStats();
-    const interval = setInterval(fetchStats, 15000);
+    const interval = setInterval(fetchStats, 5000); // Real-time 5s pulse
     return () => clearInterval(interval);
   }, [fetchStats]);
 
   useEffect(() => {
-    if (activeModule !== 'mfd') fetchModuleData();
+    if (activeModule !== 'mfd') {
+      fetchModuleData();
+      const interval = setInterval(fetchModuleData, 3000); // Stable 3s pulse
+      return () => clearInterval(interval);
+    }
   }, [activeModule, fetchModuleData]);
 
   // LIVE TELEMETRY GENERATOR
@@ -813,7 +817,7 @@ export default function MasterForensicDashboard() {
 
         /* LISTS */
         .soc-full-card { background: #131220; border: 1px solid rgba(255,255,255,0.05); border-radius: 20px; padding: 24px; flex: 1; }
-        .soc-list { display: flex; flex-direction: column; gap: 8px; max-height: 500px; overflow-y: auto; padding-right: 10px; }
+        .soc-list { display: flex; flex-direction: column; gap: 8px; max-height: 800px; overflow-y: auto; padding-right: 10px; }
         .soc-list::-webkit-scrollbar { width: 4px; }
         .soc-list::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
         .list-head { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; padding: 10px 16px; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 8px; }

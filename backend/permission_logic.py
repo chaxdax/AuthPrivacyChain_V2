@@ -10,8 +10,11 @@ from cryptography.fernet import Fernet
 
 perm_bp = Blueprint('permissions', __name__)
 
+basedir = os.path.abspath(os.path.dirname(__file__))
+db_path = os.path.join(basedir, 'auth_chain.db')
+
 def get_db():
-    conn = sqlite3.connect('auth_chain.db', timeout=10)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -125,9 +128,10 @@ def shared_with_me():
         target_phone = user['phone_number']
 
         query = '''
-            SELECT f.id, f.filename, f.is_encrypted, p.owner_id AS owner 
+            SELECT f.id, f.filename, f.is_encrypted, u.numeric_id AS owner 
             FROM permissions p 
             JOIN files f ON p.file_id = f.id 
+            JOIN users u ON (p.owner_id = u.phone_number OR p.owner_id = u.numeric_id)
             WHERE (p.shared_with_username = ? OR p.shared_with_username = ?) AND p.status = 'ACTIVE'
         '''
         rows = conn.execute(query, (target_phone, user_identity)).fetchall()

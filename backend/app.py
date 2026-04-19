@@ -15,6 +15,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from permission_logic import perm_bp 
 from admin_routes import admin_bp
+from clickstream_tracker import clickstream_bp
 from services.activity_logger import log_activity
 
 app = Flask(__name__)
@@ -31,6 +32,7 @@ app.config['SECRET_KEY'] = 'SYSTEM_SECURE_SIGMA_99'
 
 app.register_blueprint(perm_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(clickstream_bp)
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 db_path = os.path.join(basedir, 'auth_chain.db')
@@ -95,22 +97,54 @@ def init_db():
                        resolved INTEGER DEFAULT 0, 
                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     
+    # Recovery Requests Table
+    cursor.execute('''CREATE TABLE IF NOT EXISTS recovery_requests
+                      (id TEXT PRIMARY KEY, 
+                       user_id TEXT, 
+                       name_entered TEXT,
+                       status TEXT DEFAULT 'PENDING', 
+                       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_logs(timestamp)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_clickstream_timestamp ON clickstream_logs(timestamp)")
+    
     conn.commit()
     conn.close()
 
 init_db()
+
+from ip_geofencing import enforce_geofence
 
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('x-access-token')
         if not token:
-            return jsonify({'message': 'Token missing'}), 401
+            return jsonify({'message': 'Token is missing!'}), 401
+        
+        # Admin Bypass is near-instant
+        if token == 'admin-bypass':
+            return f('ADM-777', *args, **kwargs)
+
         try:
+            # Decode once and reuse
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             current_user_id = data['public_id']
         except:
-            return jsonify({'message': 'Token invalid'}), 401
+            return jsonify({'message': 'Token is invalid!'}), 401
+
+        # GEOFENCING ENFORCEMENT (Optimized)
+        ip = request.headers.get('X-Forwarded-For', request.remote_addr or "127.0.0.1")
+        if ',' in ip: ip = ip.split(',')[0].strip()
+        
+        allowed, country, detected_ip = enforce_geofence(ip, current_user_id, 'API_ACTION')
+        if not allowed:
+            return jsonify({
+                'message': 'GEOFENCE_BLOCK: Access from outside India or VPN detected.',
+                'country': country,
+                'detected_ip': detected_ip
+            }), 403
+
         return f(current_user_id, *args, **kwargs)
     return decorated
 
@@ -165,6 +199,28 @@ def login():
     user_id_val = data.get('userID') or data.get('username')
     if user_id_val:
         user_id_val = str(user_id_val).strip()
+    
+    # GEOFENCING ENFORCEMENT: Block Login attempts from foreign IPs
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr or "127.0.0.1")
+    if ',' in ip: ip = ip.split(',')[0].strip()
+    
+    # Try to resolve user_id_val to the internal UUID for consistent logging
+    log_owner_id = 'ANONYMOUS'
+    if user_id_val:
+        conn = sqlite3.connect(db_path)
+        u = conn.execute("SELECT id FROM users WHERE numeric_id=?", (user_id_val,)).fetchone()
+        if u: log_owner_id = u[0]
+        conn.close()
+
+    allowed, country, detected_ip = enforce_geofence(ip, log_owner_id, 'LOGIN_BREACH')
+    print(f"DEBUG: Login Attempt from IP: {detected_ip}, Country: {country}, Allowed: {allowed}")
+    
+    if not allowed:
+        return jsonify({
+            'message': 'GEOFENCE_BLOCK: Access from outside India or VPN detected.',
+            'country': country,
+            'detected_ip': detected_ip
+        }), 403
     
     if not user_id_val:
         return jsonify({"message": "ID is required"}), 400
@@ -292,11 +348,11 @@ def get_alerts(current_user_id):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    # Fetch alerts related to the user only (Privacy Isolation)
+    # Fetch alerts related to the user OR anonymous breaches (Privacy Isolation + Transparency)
     cursor.execute('''
         SELECT a.id, a.severity, a.alert_message, a.actor_ip as user, a.resolved, a.timestamp
         FROM alerts a
-        WHERE a.owner_id = ?
+        WHERE a.owner_id = ? OR a.owner_id = 'ANONYMOUS'
         ORDER BY a.timestamp DESC
         LIMIT 50
     ''', (current_user_id,))
@@ -310,8 +366,8 @@ def get_alerts(current_user_id):
 def resolve_alert(current_user_id, alert_id):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    # Ensure the user owns this alert
-    cursor.execute("UPDATE alerts SET resolved=1 WHERE id=? AND owner_id=?", (alert_id, current_user_id))
+    # Ensure the user can resolve their own alerts or anonymous breaches
+    cursor.execute("UPDATE alerts SET resolved=1 WHERE id=? AND (owner_id=? OR owner_id='ANONYMOUS')", (alert_id, current_user_id))
     conn.commit()
     conn.close()
     return jsonify({"message": "Alert resolved successfully"}), 200
@@ -528,7 +584,7 @@ def public_ledger():
         # fake_id is just a display string like #9A2F8X
         import hashlib
         fake_id = "#" + hashlib.md5(real_id.encode()).hexdigest()[:6].upper()
-        ledger_data.append({"real_id": real_id, "fake_id": fake_id, "filename": f[1]})
+        ledger_data.append({"id": real_id, "fake_id": fake_id, "filename": f[1]})
         
     return jsonify(ledger_data)
 
@@ -543,27 +599,44 @@ def hack_attempt():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        # Strictly find the owner of this specific file
+        # Find the owner of this specific file
         cursor.execute("SELECT user_id, filename FROM files WHERE id=?", (file_id,))
         file_record = cursor.fetchone()
         
         if file_record:
             owner_id = file_record['user_id']
             filename = file_record['filename']
+            
+            # Get the owner's numeric ID for display
+            cursor.execute("SELECT numeric_id FROM users WHERE id=?", (owner_id,))
+            owner_row = cursor.fetchone()
+            owner_display = owner_row['numeric_id'] if owner_row else owner_id
+            
+            msg_owner = f"CRITICAL: Unauthorized decryption attempt on your file '{filename}' from IP: {ip_address}"
+            msg_admin = f"INFILTRATION DETECTED: File '{filename}' (Owner: {owner_display}) targeted from IP: {ip_address}"
+            
+            # 1. Alert to the file owner
             alert_id = str(uuid.uuid4())
-            msg = f"CRITICAL: Unauthorized decryption attempt intercepted on your file '{filename}' from IP: {ip_address}"
-            
-            # 1. Insert into alerts table for the specific owner
             cursor.execute("INSERT INTO alerts (id, owner_id, actor_ip, file_id, severity, alert_message) VALUES (?, ?, ?, ?, ?, ?)",
-                           (alert_id, owner_id, ip_address, file_id, "CRITICAL", msg))
+                           (alert_id, owner_id, ip_address, file_id, "CRITICAL", msg_owner))
             
-            # 2. Also log as a formal security event in activity_logs for the forensic feed
+            # 2. Alert to Admin
+            admin_alert_id = str(uuid.uuid4())
+            cursor.execute("INSERT INTO alerts (id, owner_id, actor_ip, file_id, severity, alert_message) VALUES (?, ?, ?, ?, ?, ?)",
+                           (admin_alert_id, 'ADM-777', ip_address, file_id, "CRITICAL", msg_admin))
+            
+            # 3. Log in activity_logs for forensic feed
             log_id = str(uuid.uuid4())
             cursor.execute("INSERT INTO activity_logs (id, owner_id, actor_identity, action, target_name) VALUES (?, ?, ?, ?, ?)",
                            (log_id, owner_id, f"IP:{ip_address}", "SECURITY_BREACH", filename))
             
             conn.commit()
-            return jsonify({"status": "intercepted", "message": "Alert dispatched to owner"}), 200
+            return jsonify({
+                "status": "intercepted",
+                "message": "Alert dispatched to owner and admin",
+                "filename": filename,
+                "owner_display": owner_display
+            }), 200
         else:
             return jsonify({"message": "File not found"}), 404
     except Exception as e:
@@ -659,4 +732,4 @@ def change_password(current_user_id):
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)

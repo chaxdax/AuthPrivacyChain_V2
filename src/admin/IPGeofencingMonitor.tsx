@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const ADMIN_TOKEN = 'admin-bypass';
-const API = (import.meta.env.VITE_API_URL || '${import.meta.env.VITE_API_URL || }');
+const API = 'http://127.0.0.1:5000';
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
 interface IPThreat {
@@ -10,6 +10,13 @@ interface IPThreat {
   attempts: number;
   severity: string;
   last_seen: string;
+  user_id: string;
+  country?: string;
+}
+
+interface LocationData {
+  text: string;
+  isIndia: boolean;
 }
 
 const formatDelhiTime = (utcDateStr: any) => {
@@ -26,20 +33,23 @@ const formatDelhiTime = (utcDateStr: any) => {
 };
 
 export default function IPGeofencingMonitor() {
-  const [ipLocations, setIpLocations] = useState<Record<string, string>>({});
+  const [ipLocations, setIpLocations] = useState<Record<string, LocationData>>({});
 
-  const resolveLocationForIP = async (ip: string) => {
-    if (ip === '127.0.0.1' || ip === 'localhost') return 'Mumbai, India (Localhost)';
+  const resolveLocationForIP = async (ip: string): Promise<LocationData> => {
+    if (ip === '127.0.0.1' || ip === 'localhost') return { text: 'Mumbai, India (Localhost)', isIndia: true };
     try {
       const res = await fetch(`http://ip-api.com/json/${ip}`);
       const data = await res.json();
       if (data.status === 'success') {
-        return `${data.city || 'Unknown'}, ${data.country || 'Unknown'} (${data.isp || 'Unknown ISP'})`;
+        return { 
+          text: `${data.city || 'Unknown'}, ${data.country || 'Unknown'} (${data.isp || 'Unknown ISP'})`,
+          isIndia: data.countryCode === 'IN'
+        };
       }
     } catch (e) {
-      return 'Tracking...';
+      return { text: 'Tracking...', isIndia: true };
     }
-    return 'Unknown Location';
+    return { text: 'Unknown Location', isIndia: false };
   };
 
   const [threats, setThreats] = useState<IPThreat[]>([]);
@@ -60,7 +70,7 @@ export default function IPGeofencingMonitor() {
 
   useEffect(() => {
     fetchThreats();
-    const interval = setInterval(fetchThreats, 10000); // Auto-refresh every 10s
+    const interval = setInterval(fetchThreats, 3000); // 3s High-frequency radar
     return () => clearInterval(interval);
   }, []);
 
@@ -70,7 +80,15 @@ export default function IPGeofencingMonitor() {
       let changed = false;
       for (const t of threats) {
         if (!newLocs[t.ip]) {
-          newLocs[t.ip] = await resolveLocationForIP(t.ip);
+          // If backend already gave us a country code, use it!
+          if (t.country && t.country !== 'Unknown') {
+            newLocs[t.ip] = { 
+              text: `${t.country} (Verified Breach)`, 
+              isIndia: t.country === 'IN' 
+            };
+          } else {
+            newLocs[t.ip] = await resolveLocationForIP(t.ip);
+          }
           changed = true;
         }
       }
@@ -79,23 +97,22 @@ export default function IPGeofencingMonitor() {
     if (threats.length > 0) resolveAll();
   }, [threats]);
 
-  const filteredThreats = threats.filter(t => 
-    t.ip.toLowerCase().includes(search.toLowerCase()) || 
-    t.severity.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredThreats = threats.filter(t => {
+    return t.ip.toLowerCase().includes(search.toLowerCase()) || 
+           t.user_id.toLowerCase().includes(search.toLowerCase());
+  });
 
   const totalBlocked = threats.length;
-  const criticalThreats = threats.filter(t => t.severity === 'CRITICAL').length;
-  const highThreats = threats.filter(t => t.severity === 'HIGH').length;
+  const criticalThreats = threats.filter(t => {
+    const loc = ipLocations[t.ip];
+    return loc && !loc.isIndia;
+  }).length;
+  const highThreats = threats.filter(t => t.severity === 'HIGH' || t.severity === 'CRITICAL').length;
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'CRITICAL': return '#ef4444';
-      case 'HIGH': return '#f97316';
-      case 'MEDIUM': return '#f59e0b';
-      case 'LOW': return '#3b82f6';
-      default: return '#6b7280';
-    }
+  const getSeverityColor = (ip: string) => {
+    const loc = ipLocations[ip];
+    if (!loc) return '#6b7280';
+    return loc.isIndia ? '#10b981' : '#ef4444';
   };
 
   const getSeverityBadgeClass = (severity: string) => {
@@ -157,50 +174,60 @@ export default function IPGeofencingMonitor() {
             <tr>
               <th>Origin IP Address</th>
               <th>Geographic Location</th>
+              <th>Associated User</th>
               <th>Total Attempts</th>
-              <th>Maximum Severity</th>
+              <th>Geofence Risk</th>
               <th>Last Seen</th>
-              <th>Firewall Status</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
             {loading && threats.length === 0 ? (
-              <tr><td colSpan={6} className="ip-empty">Initializing Geofencing Radar...</td></tr>
+              <tr><td colSpan={7} className="ip-empty">Initializing Geofencing Radar...</td></tr>
             ) : filteredThreats.length === 0 ? (
-              <tr><td colSpan={6} className="ip-empty">No external threats detected on perimeter.</td></tr>
+              <tr><td colSpan={7} className="ip-empty">No external threats detected on perimeter.</td></tr>
             ) : (
-              filteredThreats.map((threat, index) => (
-                <tr key={index} className="ip-row">
-                  <td className="ip-address-cell">
-                    <span className="radar-ping" style={{background: getSeverityColor(threat.severity)}}></span>
-                    {threat.ip}
-                  </td>
-                  <td className="ip-location-cell">
-                    <span className="geo-icon">🌍</span> {ipLocations[threat.ip] || 'Resolving...'}
-                  </td>
-                  <td className="ip-attempts-cell">
-                    <div className="attempt-bar-bg">
-                      <div 
-                        className="attempt-bar-fill" 
-                        style={{
-                          width: `${Math.min(100, threat.attempts * 5)}%`,
-                          background: getSeverityColor(threat.severity)
-                        }}
-                      ></div>
-                    </div>
-                    <span>{threat.attempts} pings</span>
-                  </td>
-                  <td>
-                    <span className={`ip-badge ${getSeverityBadgeClass(threat.severity)}`}>
-                      {threat.severity}
-                    </span>
-                  </td>
-                  <td className="ip-time-cell">{formatDelhiTime(threat.last_seen)}</td>
-                  <td>
-                    <span className="ip-status-blocked">🛡️ BLOCKED</span>
-                  </td>
-                </tr>
-              ))
+              filteredThreats.map((threat, index) => {
+                const loc = ipLocations[threat.ip];
+                const isIndia = loc?.isIndia;
+                return (
+                  <tr key={index} className="ip-row">
+                    <td className="ip-address-cell">
+                      <span className="radar-ping" style={{background: getSeverityColor(threat.ip)}}></span>
+                      {threat.ip}
+                    </td>
+                    <td className="ip-location-cell">
+                      <span className="geo-icon">🌍</span> {loc?.text || 'Resolving...'}
+                    </td>
+                    <td style={{fontFamily: 'monospace', color: '#818cf8', fontWeight: 'bold'}}>
+                      {threat.user_id}
+                    </td>
+                    <td className="ip-attempts-cell">
+                      <div className="attempt-bar-bg">
+                        <div 
+                          className="attempt-bar-fill" 
+                          style={{
+                            width: `${Math.min(100, threat.attempts * 5)}%`,
+                            background: getSeverityColor(threat.ip)
+                          }}
+                        ></div>
+                      </div>
+                      <span>{threat.attempts} pings</span>
+                    </td>
+                    <td>
+                      <span className={`ip-badge ${isIndia ? 'badge-low' : 'badge-critical'}`}>
+                        {isIndia ? 'DOMESTIC_PASS' : 'FOREIGN_VPN_ALERT'}
+                      </span>
+                    </td>
+                    <td className="ip-time-cell">{formatDelhiTime(threat.last_seen)}</td>
+                    <td>
+                      <span className={isIndia ? 'ip-status-pass' : 'ip-status-blocked'}>
+                        {isIndia ? '✅ ALLOWED' : '🛡️ BLOCKED'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -476,6 +503,16 @@ export default function IPGeofencingMonitor() {
         }
         
         .ip-status-blocked {
+          font-size: 11px;
+          font-weight: 800;
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.1);
+          padding: 4px 8px;
+          border-radius: 4px;
+          border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        
+        .ip-status-pass {
           font-size: 11px;
           font-weight: 800;
           color: #10b981;
