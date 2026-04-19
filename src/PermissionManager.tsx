@@ -13,12 +13,12 @@ const PermissionManager = () => {
   const fetchData = async () => {
     try {
       const headers = { 'x-user-identity': myIdentity };
-      // Sync outbound shares
-      const resOutbound = await axios.get('https://authprivacychain-v2.onrender.com/my-shares', { headers });
+     
+      const resOutbound = await axios.get('http://127.0.0.1:5000/my-shares', { headers });
       setActiveShares(resOutbound.data || []);
 
-      // Sync inbound shared files
-      const resInbound = await axios.get('https://authprivacychain-v2.onrender.com/shared-with-me', { headers });
+      
+      const resInbound = await axios.get('http://127.0.0.1:5000/shared-with-me', { headers });
       setReceivedFiles(resInbound.data || []);
     } catch (err) { 
       console.error("Sync failed - Backend might be unreachable."); 
@@ -31,7 +31,7 @@ const PermissionManager = () => {
 
   const handleGrant = async () => {
     try {
-      const res = await axios.post('https://authprivacychain-v2.onrender.com/grant', {
+      const res = await axios.post('http://127.0.0.1:5000/grant', {
         fileId: fileId.replace('#', '').trim(),
         targetUser: targetUser.trim(),
         owner: myIdentity
@@ -46,7 +46,7 @@ const PermissionManager = () => {
 
   const handleDecrypt = async (file: any) => {
     try {
-      const res = await axios.post('https://authprivacychain-v2.onrender.com/view-decrypted', 
+      const res = await axios.post('http://127.0.0.1:5000/view-decrypted', 
         { fileId: file.id, username: myIdentity }, 
         { responseType: 'blob' }
       );
@@ -65,7 +65,7 @@ const PermissionManager = () => {
 
   const handleRevoke = async (fId: string, tUser: string) => {
     try {
-      await axios.post('https://authprivacychain-v2.onrender.com/revoke', {
+      await axios.post('http://127.0.0.1:5000/revoke', {
         fileId: fId, targetUser: tUser, owner: myIdentity
       });
       fetchData();
@@ -108,9 +108,9 @@ const PermissionManager = () => {
         </div>
 
         {/* OUTBOUND SECTION */}
-        <div className="perm-box">
+        <div className="perm-box" style={{display: 'flex', flexDirection: 'column'}}>
           <label>OUTBOUND_ACCESS (MY SHARED FILES)</label>
-          <div className="shares-list scrollable">
+          <div className="shares-list scrollable" style={{flex: 1}}>
             {activeShares.length > 0 ? activeShares.map((share, i) => (
               <div key={i} className="share-item">
                 <span className="user-tag">
@@ -126,9 +126,9 @@ const PermissionManager = () => {
       </div>
 
       {/* INBOUND SECTION */}
-      <div className="perm-box" style={{marginTop: '25px'}}>
+      <div className="perm-box" style={{marginTop: '25px', flex: 1, display: 'flex', flexDirection: 'column'}}>
         <label>INBOUND_ACCESS_NODES (SHARED WITH YOU)</label>
-        <div className="shares-list horizontal">
+        <div className="shares-list horizontal" style={{flex: 1, alignContent: 'flex-start'}}>
           {receivedFiles.length > 0 ? receivedFiles.map((file, i) => (
             <div key={i} className="share-item received">
               <div className="security-tag">● AES-256 SECURED</div>
@@ -141,7 +141,8 @@ const PermissionManager = () => {
       </div>
 
       <style>{`
-        .perm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .module-inner-content { flex: 1; width: 100%; height: 100%; display: flex; flex-direction: column; padding: 25px; box-sizing: border-box; }
+        .perm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; }
         .perm-box { background: rgba(255,255,255,0.02); padding: 25px; border-radius: 20px; border: 1px solid #111; }
         .input-hint { color: #444; font-size: 9px; text-transform: uppercase; display: block; margin-bottom: 5px; font-weight: 800; }
         .file-input-custom { width: 100%; background: #000; border: 1px solid #222; padding: 12px; border-radius: 10px; color: #fff; font-size: 11px; outline: none; transition: 0.3s; }

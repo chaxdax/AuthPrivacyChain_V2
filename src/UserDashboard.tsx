@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import PermissionManager from './PermissionManager';
 
+// Imports directly from src
+import AlertCenter from './alert'; 
+import EmergencyRoom from './Emergency'; 
+import SecurityFeed from './SecurityActivityFeed';
+
 interface UserDashboardProps {
   activeTab: string;
 }
@@ -11,35 +16,33 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Automatically fetch when switching to the Vault tab
+  const current = activeTab.toLowerCase().trim();
+
   useEffect(() => {
-    if (activeTab === 'Encrypted File Vault') fetchFiles();
-  }, [activeTab]);
+    if (current.includes('vault')) fetchFiles();
+  }, [current]);
 
   const fetchFiles = async () => {
     const token = localStorage.getItem('apc_token');
-    const myUsername = localStorage.getItem('apc_user'); // Needed for shared files
+    const myUsername = localStorage.getItem('apc_user'); 
     try {
-      // Fetch My Files
-      const resMy = await axios.get('https://authprivacychain-v2.onrender.com/my-files', { 
+      const resMy = await axios.get('http://127.0.0.1:5000/my-files', { 
         headers: { 'x-access-token': token } 
       });
       const myFiles = resMy.data.map((f: any) => ({ ...f, is_shared: false }));
 
-      // Fetch Shared Files
       let sharedFiles: any[] = [];
       try {
-        const resShared = await axios.get('https://authprivacychain-v2.onrender.com/shared-with-me', { 
+        const resShared = await axios.get('http://127.0.0.1:5000/shared-with-me', { 
           headers: { 'x-user-identity': myUsername } 
         });
         sharedFiles = resShared.data.map((f: any) => ({ ...f, is_shared: true }));
       } catch (e) {
         console.warn("Shared files route not reachable.");
       }
-
       setFiles([...myFiles, ...sharedFiles]);
     } catch (err) { 
-      console.error("Vault offline or session expired"); 
+      console.error("Vault offline"); 
     }
   };
 
@@ -50,152 +53,256 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     formData.append('file', selectedFile);
     const token = localStorage.getItem('apc_token');
     try {
-      await axios.post('https://authprivacychain-v2.onrender.com/upload', formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data', 
-          'x-access-token': token 
-        }
+      await axios.post('http://127.0.0.1:5000/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data', 'x-access-token': token }
       });
       setSelectedFile(null);
       fetchFiles();
-      alert("Upload successful. Ready for encryption.");
-    } catch (err) { 
-      alert("Upload failed. Check connection."); 
-    } finally { 
-      setIsProcessing(false); 
-    }
+    } catch (err) { alert("Upload failed."); } finally { setIsProcessing(false); }
   };
 
   const handleEncryptAll = async () => {
     const token = localStorage.getItem('apc_token');
     setIsProcessing(true);
     try {
-      await axios.post(`https://authprivacychain-v2.onrender.com/encrypt-pending`, {}, { 
+      await axios.post(`http://127.0.0.1:5000/encrypt-pending`, {}, { 
         headers: { 'x-access-token': token } 
       });
-      alert("AES-256 Protocol Executed. Files Secured.");
       fetchFiles();
-    } catch (err) { 
-      alert("Encryption failed."); 
-    } finally { 
-      setIsProcessing(false); 
-    }
+    } catch (err) { alert("Encryption failed."); } finally { setIsProcessing(false); }
   };
 
-  // --- FIXED DECRYPT LOGIC ---
   const handleDecrypt = async (file: any) => {
     try {
-      const res = await axios.get(`https://authprivacychain-v2.onrender.com/download/${file.id}`, {
+      const res = await axios.get(`http://127.0.0.1:5000/download/${file.id}`, {
         headers: { 'x-access-token': localStorage.getItem('apc_token') },
         responseType: 'blob' 
       });
-      
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      // Fixed: used file.filename instead of name
       link.setAttribute('download', file.filename);
       document.body.appendChild(link);
       link.click();
-      
       link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert("Decryption/Download failed. Check Authorization.");
-    }
+
+      // --- SOC BACKEND TRIGGER ADDED HERE ---
+      try {
+        const myUsername = localStorage.getItem('apc_user') || "User_2";
+        await axios.post('http://127.0.0.1:5000/api/log-decrypt', {
+          user: myUsername,
+          owner: file.owner || "User_1", 
+          file: file.filename
+        });
+      } catch (logErr) {
+        console.warn("SOC activity recording failed.");
+      }
+      // ---------------------------------------
+
+    } catch (err) { alert("Decryption failed."); }
   };
 
   const handleDelete = async (id: string) => {
     if (!window.confirm("Delete file permanently?")) return;
     const token = localStorage.getItem('apc_token');
     try {
-      await axios.delete(`https://authprivacychain-v2.onrender.com/delete-file/${id}`, { 
+      await axios.delete(`http://127.0.0.1:5000/delete-file/${id}`, { 
         headers: { 'x-access-token': token } 
       });
       fetchFiles();
-    } catch (err) { 
-      alert("Delete failed."); 
-    }
+    } catch (err) { alert("Delete failed."); }
   };
 
-  if (activeTab === 'Permission Manager') {
-    return <PermissionManager />;
-  }
-
-  if (activeTab !== 'Encrypted File Vault') {
-    return <div className="placeholder">SYSTEM_READY</div>;
-  }
-
-  return (
-    <div className="vault-enlarged-root">
-      <div className="vault-header-control">
-        <input type="file" id="v-file" onChange={(e) => e.target.files && setSelectedFile(e.target.files[0])} hidden />
-        <label htmlFor="v-file" className="v-picker-long">
-          {selectedFile ? selectedFile.name : "// SELECT_DATA_STREAM"}
-        </label>
-        <div className="btn-group">
+  // --- ROUTING LOGIC ---
+  let content;
+  
+  if (current.includes('vault')) {
+    content = (
+      <div className="vault-enlarged-root">
+        <div className="vault-header-control">
+          <input type="file" id="v-file" onChange={(e) => e.target.files && setSelectedFile(e.target.files[0])} hidden />
+          <label htmlFor="v-file" className="v-picker-long">
+            {selectedFile ? selectedFile.name : "// SELECT_DATA_STREAM"}
+          </label>
+          <div className="btn-group">
             <button onClick={handleUpload} className="v-upload-btn" disabled={isProcessing}>
               {isProcessing ? "PROCESSING..." : "UPLOAD"}
             </button>
             <button onClick={handleEncryptAll} className="v-encrypt-btn" disabled={isProcessing}>
               ENCRYPT
             </button>
+          </div>
+        </div>
+
+        <div className="vault-table-container">
+          <div className="v-table-head">
+            <span>FILE_NO</span>
+            <span>FILE_IDENTIFIER</span>
+            <span>SECURITY_LAYER</span>
+            <span style={{ textAlign: 'right' }}>COMMANDS</span>
+          </div>
+          
+          <div className="v-table-body">
+            {files.map((file) => (
+              <div key={file.id} className="v-table-row">
+                <div className="v-col-id" style={{ color: '#2563eb', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                  #{file.id.slice(0, 8)}
+                </div>
+                <div className="v-col-name">
+                  📄 {file.filename}
+                  {file.is_shared && <span style={{ color: '#3b82f6', fontSize: '9px', marginLeft: '10px', fontWeight: 'bold' }}>[SHARED]</span>}
+                </div>
+                <div className={`v-col-status ${file.is_encrypted ? 'active' : ''}`}>
+                  {file.is_encrypted ? "AES_256_SECURED" : "RAW_UNSECURED"}
+                </div>
+                <div className="v-col-cmds">
+                  <button onClick={() => handleDecrypt(file)} className="v-btn dec">DECRYPT</button>
+                  {!file.is_shared && <button onClick={() => handleDelete(file.id)} className="v-btn del">DEL</button>}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
-
-      <div className="vault-table-container">
-        <div className="v-table-head">
-          <span>FILE_NO</span>
-          <span>FILE_IDENTIFIER</span>
-          <span>SECURITY_LAYER</span>
-          <span style={{textAlign: 'right'}}>COMMANDS</span>
-        </div>
-        
-        <div className="v-table-body">
-          {files.map((file) => (
-            <div key={file.id} className="v-table-row">
-              <div className="v-col-id" style={{color: '#2563eb', fontWeight: 'bold', fontFamily: 'monospace'}}>
-                #{file.id.toString().substring(0, 4)}
-              </div>
-              
-              <div className="v-col-name">
-                📄 {file.filename}
-                {file.is_shared && <span style={{color: '#3b82f6', fontSize: '9px', marginLeft: '10px', fontWeight: 'bold'}}>[SHARED]</span>}
-              </div>
-              <div className={`v-col-status ${file.is_encrypted ? 'active' : ''}`}>
-                {file.is_encrypted ? "AES_256_SECURED" : "RAW_UNSECURED"}
-              </div>
-              <div className="v-col-cmds">
-                {/* FIXED: Passing the entire file object to match function signature */}
-                <button onClick={() => handleDecrypt(file)} className="v-btn dec">DECRYPT</button>
-                {!file.is_shared && (
-                  <button onClick={() => handleDelete(file.id)} className="v-btn del">DEL</button>
-                )}
-              </div>
-            </div>
-          ))}
+    );
+  } else if (current === 'permission manager' || current.includes('alert') || current.includes('emergency') || current.includes('recovery') || current.includes('security')) {
+    content = (
+      <div className="vault-enlarged-root">
+        <div className="vault-table-container">
+            {current === 'permission manager' && <PermissionManager />}
+            {current.includes('alert') && <AlertCenter />}
+            {(current.includes('emergency') || current.includes('recovery')) && <EmergencyRoom />}
+            {current.includes('security') && <SecurityFeed />}
         </div>
       </div>
+    );
+  } else {
+    content = (
+      <div style={{ color: '#444', textAlign: 'center', marginTop: '50px', fontFamily: 'monospace' }}>
+        [ SYSTEM_IDLE ] <br />
+        Active Tab: "{activeTab}"
+      </div>
+    );
+  }
 
+  return (
+    <div className="dashboard-outer-wrapper">
+      <div className="module-content-shaper">
+        {content}
+      </div>
       <style>{`
-        .vault-enlarged-root { width: 100%; height: 100%; display: flex; flex-direction: column; padding: 0; }
-        .vault-header-control { display: flex; gap: 15px; margin-bottom: 20px; background: rgba(255,255,255,0.02); padding: 20px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); }
-        .v-picker-long { flex: 1; background: #000; border: 1px solid #222; padding: 15px; border-radius: 12px; color: #666; font-family: monospace; font-size: 11px; cursor: pointer; overflow: hidden; }
-        .btn-group { display: flex; gap: 10px; }
-        .v-upload-btn { background: #fff; color: #000; padding: 0 25px; border-radius: 12px; font-weight: 900; font-size: 10px; cursor: pointer; border: none; }
-        .v-encrypt-btn { background: #2563eb; color: #fff; padding: 0 25px; border-radius: 12px; font-weight: 900; font-size: 11px; cursor: pointer; border: none; }
-        .vault-table-container { flex: 1; display: flex; flex-direction: column; background: rgba(10, 10, 10, 0.4); border-radius: 20px; border: 1px solid rgba(255,255,255,0.03); overflow: hidden; }
-        .v-table-head { display: grid; grid-template-columns: 80px 2fr 1fr 180px; padding: 15px 25px; font-size: 9px; color: #2563eb; font-weight: 900; letter-spacing: 2px; border-bottom: 1px solid #111; }
-        .v-table-body { flex: 1; overflow-y: auto; padding: 10px; }
-        .v-table-row { display: grid; grid-template-columns: 80px 2fr 1fr 180px; align-items: center; padding: 18px 20px; background: rgba(255,255,255,0.01); border: 1px solid #0a0a0a; margin-bottom: 8px; border-radius: 15px; }
-        .v-col-name { color: #fff; font-size: 13px; font-family: monospace; }
-        .v-col-status { font-size: 10px; font-weight: 800; color: #333; }
+        .dashboard-outer-wrapper { 
+          width: 100%; 
+          height: 100%; 
+          display: flex; 
+          flex-direction: column; 
+          overflow: hidden; 
+        }
+
+        .module-content-shaper {
+          flex: 1;
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .vault-enlarged-root { 
+          width: 100%; 
+          height: 100%; 
+          display: flex; 
+          flex-direction: column; 
+          padding: 20px; 
+          box-sizing: border-box; 
+        }
+        
+        .vault-header-control { 
+          display: flex; 
+          width: 100%;
+          gap: 15px; 
+          margin-bottom: 20px; 
+          background: rgba(255,255,255,0.02); 
+          padding: 25px; 
+          border-radius: 20px; 
+          border: 1px solid rgba(255,255,255,0.05); 
+          box-sizing: border-box;
+        }
+
+        .v-picker-long { 
+          flex: 2; 
+          background: #000; 
+          border: 1px solid #222; 
+          padding: 18px; 
+          border-radius: 12px; 
+          color: #666; 
+          font-family: monospace; 
+          font-size: 11px; 
+          cursor: pointer; 
+          display: flex; 
+          align-items: center; 
+        }
+
+        .btn-group { 
+          flex: 1; 
+          display: flex; 
+          gap: 10px; 
+        }
+
+        .v-upload-btn, .v-encrypt-btn { 
+          flex: 1; 
+          height: 55px; 
+          border-radius: 12px; 
+          font-weight: 900; 
+          font-size: 11px; 
+          cursor: pointer; 
+          border: none; 
+          letter-spacing: 1px; 
+        }
+
+        .v-upload-btn { background: #fff; color: #000; }
+        .v-encrypt-btn { background: #2563eb; color: #fff; }
+
+        .vault-table-container { 
+          flex: 1; 
+          width: 100%;
+          background: rgba(10, 10, 10, 0.4); 
+          border-radius: 20px; 
+          border: 1px solid rgba(255,255,255,0.03); 
+          overflow: hidden; 
+          display: flex; 
+          flex-direction: column; 
+        }
+
+        .v-table-head { 
+          display: grid; 
+          grid-template-columns: 120px 2fr 1fr 200px; 
+          padding: 20px 30px; 
+          font-size: 10px; 
+          color: #2563eb; 
+          font-weight: 900; 
+          border-bottom: 1px solid #111; 
+          letter-spacing: 2px; 
+        }
+
+        .v-table-body { flex: 1; overflow-y: auto; padding: 15px; }
+
+        .v-table-row { 
+          display: grid; 
+          grid-template-columns: 120px 2fr 1fr 200px; 
+          align-items: center; 
+          padding: 22px 25px; 
+          background: rgba(255,255,255,0.01); 
+          border: 1px solid #0a0a0a; 
+          margin-bottom: 10px; 
+          border-radius: 18px; 
+        }
+
+        .v-col-name { color: #fff; font-size: 14px; font-family: monospace; }
+        .v-col-status { font-size: 11px; font-weight: 800; color: #333; }
         .v-col-status.active { color: #10b981; }
-        .v-col-cmds { display: flex; gap: 8px; justify-content: flex-end; }
-        .v-btn { background: #000; border: 1px solid #222; color: #fff; padding: 7px 12px; border-radius: 8px; font-size: 10px; cursor: pointer; }
+        .v-col-cmds { display: flex; gap: 10px; justify-content: flex-end; }
+        .v-btn { background: #000; border: 1px solid #222; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 10px; cursor: pointer; font-weight: 800; }
         .v-btn.dec { border-color: #10b981; color: #10b981; }
         .v-btn.del:hover { color: #ef4444; border-color: #ef4444; }
-        .placeholder { height: 100%; display: flex; align-items: center; justify-content: center; color: #222; font-weight: 900; }
       `}</style>
     </div>
   );

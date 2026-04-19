@@ -1,4 +1,5 @@
 import UserDashboard from './UserDashboard';
+import MasterForensicDashboard from './admin/MasterForensicDashboard';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
@@ -17,9 +18,16 @@ function App() {
 
   const [showMasterModal, setShowMasterModal] = useState(false);
   const [generatedKey, setGeneratedKey] = useState('');
+  const [showLedger, setShowLedger] = useState(false);
+  const [fullScreenAlert, setFullScreenAlert] = useState(false);
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+  const [recoveryName, setRecoveryName] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState('');
+  const [ledgerFiles, setLedgerFiles] = useState<any[]>([]);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileEncryptionResult, setFileEncryptionResult] = useState<{iv: string, encrypted_data: string, filename: string} | null>(null);
+  // UPDATED: Added file_id to the type definition here
+  const [fileEncryptionResult, setFileEncryptionResult] = useState<{iv: string, encrypted_data: string, filename: string, file_id: string} | null>(null);
 
   const adminModules = [
     { name: 'Master Forensic Dashboard', icon: '🖥️', def: 'A high-level view that allows the Admin to monitor the overall health and security of the entire system.', actions: ['Global System Scan', 'Emergency Lockdown'] },
@@ -33,7 +41,7 @@ function App() {
   const userModules = [
     { name: 'Encrypted File Vault', icon: '🔐', def: 'Upload files where the system performs AES-256 encryption before data leaves the device.', actions: ['Choose File', 'Encrypt & Upload'] },
     { name: 'Permission Manager', icon: '🔑', def: 'Grant or revoke access to files for specific users. Recorded permanently on the Blockchain.', actions: ['Grant Access', 'Revoke Permission'] },
-    { name: 'Security Activity Feed', icon: '📜', def: 'A dashboard page where the user can see a history of who accessed their files.', actions: ['Export Forensic Report', 'Clear History'] },
+    { name: 'Security Activity Feed', icon: '📜', def: 'A Dashboard page where the user can see history of his own activity and who accessed their files.', actions: ['Export Forensic Report', 'Clear History'] },
     { name: 'Real-Time Alert Center', icon: '🚨', def: 'A notification area that pops up alerts if an unauthorized user tries to click on private data.', actions: ['Dismiss Alert', 'Block Source Device'] },
     { name: 'Emergency Recovery Tool', icon: '🛠️', def: 'Use your Master Key to recover data if you lose your account password.', actions: ['Validate Master Key', 'Initiate Recovery'] }
   ];
@@ -52,6 +60,29 @@ function App() {
     }
   }, []);
 
+  const fetchLedgerFiles = async () => {
+    try {
+      const res = await axios.get('http://127.0.0.1:5000/public-ledger');
+      setLedgerFiles(res.data);
+    } catch (err) {
+      console.error("Failed to fetch ledger files", err);
+    }
+  };
+
+  const handleHackAttempt = async (real_id: string) => {
+    try {
+      await axios.post('http://127.0.0.1:5000/hack-attempt', { file_id: real_id });
+    } catch (error) {
+      console.error("Hack attempt log failed", error);
+    }
+    setFullScreenAlert(true);
+    setShowLedger(false);
+  };
+
+  useEffect(() => {
+    if (showLedger) fetchLedgerFiles();
+  }, [showLedger]);
+
   const loginSuccess = (data: any) => {
     localStorage.setItem('apc_token', data.token);
     localStorage.setItem('apc_role', data.role || 'user'); 
@@ -61,7 +92,11 @@ function App() {
     setIdentity(data.identity);
     setRole(data.role || 'user');
     setView('home');
-    setActiveTab(userModules[0].name);
+    if (data.forceTab) {
+      setActiveTab(data.forceTab);
+    } else {
+      setActiveTab(userModules[0].name);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,11 +109,12 @@ function App() {
     formData.append('file', selectedFile);
     const token = localStorage.getItem('apc_token');
     try {
-      const response = await axios.post('https://authprivacychain-v2.onrender.com/encrypt', formData, {
+      const response = await axios.post('http://127.0.0.1:5000/encrypt', formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'x-access-token': token }
       });
+      // UPDATED: Now saving the entire response which includes file_id/unique hash
       setFileEncryptionResult(response.data);
-      alert("File AES-256 Encryption Complete & Saved to Vault!");
+      alert(`File AES-256 Encryption Complete. ID: ${response.data.file_id}`);
     } catch (error) { alert("Encryption Failed. Ensure you are logged in."); }
   };
 
@@ -96,7 +132,7 @@ function App() {
   const runDecryption = async () => {
     if(!fileEncryptionResult) return;
     try {
-        const response = await axios.post('https://authprivacychain-v2.onrender.com/decrypt', {
+        const response = await axios.post('http://127.0.0.1:5000/decrypt', {
             encrypted_data: fileEncryptionResult.encrypted_data,
             iv: fileEncryptionResult.iv
         });
@@ -112,18 +148,26 @@ function App() {
     } catch (error) { alert("Decryption failed!"); }
   };
 
-  const handleMasterRecovery = async () => {
-    const key = prompt("ENTER MASTER KEY:");
-    if (!key) return;
+  const handleMasterRecoverySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recoveryName || !recoveryKey) return;
     try {
-      const response = await axios.post('https://authprivacychain-v2.onrender.com/recover', { masterKey: key });
-      loginSuccess(response.data);
-    } catch (error) { alert("Invalid Master Key!"); }
+      const response = await axios.post('http://127.0.0.1:5000/request-recovery', { 
+        name: recoveryName, 
+        masterKey: recoveryKey 
+      });
+      if (response.status === 200) {
+         loginSuccess(response.data);
+         setShowRecoveryModal(false);
+      } else {
+         alert(response.data.message);
+         if (response.status === 201) setShowRecoveryModal(false);
+      }
+    } catch (error: any) { alert(error.response?.data?.message || "Invalid Master Key!"); }
   };
 
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (role === 'admin' && (view === 'login' || view === 'signup')) {
       if (identity === 'ADM-777' && password === 'admin123') {
         loginSuccess({ role: 'admin', identity: 'ADM-777', token: 'admin-bypass' });
@@ -134,12 +178,21 @@ function App() {
       }
     }
 
+    if (view === 'signup') {
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\W).+$/;
+      if (!passwordRegex.test(password)) {
+        alert("SECURITY RISK: Password must contain at least one uppercase letter, one lowercase letter, and one special character.");
+        return;
+      }
+    }
+
     const endpoint = view === 'signup' ? '/register' : '/login';
     
     try {
-      const response = await axios.post(`https://authprivacychain-v2.onrender.com${endpoint}`, { 
+      const response = await axios.post(`http://127.0.0.1:5000${endpoint}`, { 
         userID: identity, 
-        password: password 
+        password: password,
+        legalName: legalName
       });
 
       if (view === 'signup') {
@@ -149,12 +202,15 @@ function App() {
         loginSuccess(response.data); 
       }
     } catch (error: any) { 
-      alert(error.response?.data?.message || "Connection Failed!"); 
+      console.error("Auth Error:", error);
+      alert(error.response?.data?.message || "Connection Failed! Is Flask running on port 5000?"); 
     }
   };
 
   const handleLogout = () => {
-    localStorage.clear();
+    localStorage.removeItem('apc_token');
+    localStorage.removeItem('apc_role');
+    localStorage.removeItem('apc_user');
     setView('login');
     setIdentity('');
     setPassword('');
@@ -203,6 +259,9 @@ function App() {
     return (
       <div className="main-portal">
         <div className="cyber-grid-bg"></div>
+        <button type="button" className="top-right-ledger-btn" onClick={() => setShowLedger(true)}>
+          <span className="pulse-dot"></span> LIVE NETWORK LEDGER
+        </button>
         <div className="cloud-container">
            <div className="asset-cloud c1">☁️</div>
            <div className="asset-cloud c2">☁️</div>
@@ -214,7 +273,79 @@ function App() {
               <div className="modal-icon">🔐</div>
               <h2>MASTER RECOVERY KEY</h2>
               <div className="key-display">{generatedKey}</div>
-              <button onClick={() => { setShowMasterModal(false); setView('login'); }} className="cyber-btn">I HAVE SAVED MY KEY</button>
+              <button onClick={() => { setShowMasterModal(false); setView('login'); setIdentity(''); setPassword(''); }} className="cyber-btn">I HAVE SAVED MY KEY</button>
+            </div>
+          </div>
+        )}
+        {showLedger && (
+          <div className="master-modal-overlay">
+            <div style={{ width: '90vw', maxWidth: '1000px', height: '80vh', background: '#080808', borderRadius: '30px', border: '1px solid #1a1a1a', padding: '40px', display: 'flex', flexDirection: 'column', textAlign: 'center' }}>
+              <div className="modal-icon" style={{fontSize: '40px', marginBottom: '10px'}}>🌐</div>
+              <h2 style={{fontFamily: "'Inter', sans-serif", letterSpacing: '2px', fontWeight: 900, margin: 0}}>PUBLIC NETWORK LEDGER</h2>
+              <p className="status-label" style={{color: '#2563eb', fontSize: '12px', fontWeight: 800, marginBottom: '30px', marginTop: '10px', letterSpacing: '1px'}}>REAL-TIME HACK SIMULATOR</p>
+              
+              <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'rgba(10, 10, 10, 0.4)', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.03)', textAlign: 'left' }}>
+                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', padding: '20px 30px', fontSize: '10px', color: '#2563eb', fontWeight: 900, borderBottom: '1px solid #111', letterSpacing: '2px' }}>
+                    <span>PAYLOAD_IDENTIFIER</span>
+                    <span style={{ textAlign: 'right' }}>COMMANDS</span>
+                 </div>
+                 <div style={{ flex: 1, overflowY: 'auto', padding: '15px' }}>
+                    {ledgerFiles.length === 0 ? (
+                        <div style={{ color: '#888', marginTop: '20px' }}>NO PAYLOADS DETECTED IN LEDGER</div>
+                    ) : (
+                        ledgerFiles.map((file, idx) => (
+                            <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', alignItems: 'center', padding: '22px 25px', background: 'rgba(255,255,255,0.01)', border: '1px solid #0a0a0a', marginBottom: '10px', borderRadius: '18px' }}>
+                               <div style={{ color: '#fff', fontSize: '14px', fontFamily: 'monospace' }}>📄 Block: {file.fake_id} - ENCRYPTED PAYLOAD</div>
+                               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                  <button onClick={() => handleHackAttempt(file.real_id)} style={{ background: '#000', border: '1px solid #ef4444', color: '#ef4444', padding: '10px 18px', borderRadius: '10px', fontSize: '10px', cursor: 'pointer', fontWeight: 800, transition: '0.3s' }}>DECRYPT</button>
+                               </div>
+                            </div>
+                        ))
+                    )}
+                 </div>
+              </div>
+              <button onClick={() => setShowLedger(false)} style={{ marginTop: '30px', background: '#111', color: '#444', border: '1px solid #222', borderRadius: '14px', padding: '15px', fontSize: '11px', fontWeight: 800, cursor: 'pointer' }}>CLOSE TERMINAL</button>
+            </div>
+          </div>
+        )}
+        {showRecoveryModal && (
+          <div className="master-modal-overlay">
+            <form className="master-modal-card" onSubmit={handleMasterRecoverySubmit}>
+              <div className="modal-icon">🛡️</div>
+              <h2 style={{fontFamily: "'Inter', sans-serif"}}>EMERGENCY RECOVERY</h2>
+              <p className="status-label">SUBMIT REQUEST TO ADMIN</p>
+              <div className="cyber-field" style={{textAlign: 'left', marginTop: '20px'}}>
+                <label>FULL NAME</label>
+                <input type="text" placeholder="Enter Name..." value={recoveryName} onChange={(e) => setRecoveryName(e.target.value)} required />
+              </div>
+              <div className="cyber-field" style={{textAlign: 'left'}}>
+                <label>MASTER KEY</label>
+                <input type="text" placeholder="XXXX-XXXX-XXXX-XXXX" value={recoveryKey} onChange={(e) => setRecoveryKey(e.target.value)} required />
+              </div>
+              <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
+                 <button type="button" className="cyber-btn" style={{background: '#333', color: '#fff'}} onClick={() => setShowRecoveryModal(false)}>CANCEL</button>
+                 <button type="submit" className="cyber-btn">SUBMIT REQUEST</button>
+              </div>
+            </form>
+          </div>
+        )}
+        {fullScreenAlert && (
+          <div className="denied-overlay" style={{ position: 'fixed', inset: 0, zIndex: 99999, background: '#080000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="cyber-grid-bg-red"></div>
+            <div className="denied-card">
+              <div className="denied-icon">🛑</div>
+              <h1 className="denied-title">CRITICAL HACK ATTEMPT</h1>
+              <div className="denied-divider"></div>
+              <p className="denied-text">
+                Unauthorized decryption attempt intercepted. Node connection has been forcibly severed.
+              </p>
+              <div className="denied-status-box">
+                 <span>TARGET: BLOCKCHAIN PAYLOAD</span>
+                 <span>STATUS: BLOCKED & LOGGED</span>
+              </div>
+              <button className="denied-btn" onClick={() => setFullScreenAlert(false)}>
+                DISMISS WARNING
+              </button>
             </div>
           </div>
         )}
@@ -233,90 +364,44 @@ function App() {
             {view === 'signup' && (
               <div className="cyber-field">
                 <label>FULL LEGAL IDENTITY</label>
-                <input type="text" placeholder="Enter Name..." required value={legalName} onChange={(e) => setLegalName(e.target.value)} />
+                <input type="text" placeholder="Enter Name..." required value={legalName} onChange={(e) => setLegalName(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck="false" />
               </div>
             )}
             <div className="cyber-field">
-              <label>{role === 'admin' ? 'ADMINISTRATOR TOKEN' : 'Unique ID'}</label>
-              <input type="text" placeholder={role === 'admin' ? "ADM-777" : "Enter Unique ID..."} required value={identity} onChange={(e) => setIdentity(e.target.value)} />
+              <label>{role === 'admin' ? 'ADMINISTRATOR TOKEN' : (view === 'signup' ? 'PHONE NUMBER (SMS VERIFICATION)' : 'UNIQUE ID')}</label>
+              <input type="text" placeholder={role === 'admin' ? "ADM-777" : (view === 'signup' ? "+91 " : "Enter Unique ID...")} required value={identity} autoComplete="off" autoCorrect="off" spellCheck="false" onChange={(e) => {
+                let val = e.target.value;
+                if (view === 'signup' && role === 'user' && !val.startsWith('+91')) {
+                   val = '+91 ' + val.replace(/^\+?9?1?\s?/, '');
+                }
+                setIdentity(val);
+              }} />
             </div>
             <div className="cyber-field">
               <label>ENCRYPTION PASSPHRASE</label>
-              <input type="password" placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)} />
+              <input type="password" placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck="false" />
             </div>
             <button type="submit" className="cyber-btn">{view === 'login' ? 'ESTABLISH LINK' : 'CREATE ACCOUNT'}</button>
             <div className="auth-footer-links">
-              <button type="button" className="signup-link" onClick={() => setView(view === 'login' ? 'signup' : 'login')}>
+              <button type="button" className="signup-link" onClick={() => {
+                setView(view === 'login' ? 'signup' : 'login');
+                setIdentity(view === 'login' ? '+91 ' : '');
+              }}>
                 {view === 'login' ? '// New here? Join the family.' : '// Back to Login'}
               </button>
-              <button type="button" className="v1-shortcut" onClick={handleMasterRecovery}>[ MASTER KEY ] QUICK ACCESS</button>
+              <button type="button" className="v1-shortcut" onClick={() => setShowRecoveryModal(true)}>[ MASTER KEY ] QUICK ACCESS</button>
             </div>
           </form>
         </div>
         <style>{`
           .main-portal { min-height: 100vh; background: #02040a; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; font-family: sans-serif; }
-          
-          ..cyber-grid-bg { 
-            position: absolute; 
-            inset: 0; 
-            background-image: linear-gradient(rgba(37,99,235,0.12) 1px, transparent 1px), 
-                              linear-gradient(90deg, rgba(37,99,235,0.12) 1px, transparent 1px); 
-            background-size: 50px 50px; 
-            z-index: 1; /* Lowest */
-          }
-
-          .cloud-container { 
-            position: fixed; 
-            inset: 0; 
-            z-index: 5; /* Higher than Grid */
-            pointer-events: none; 
-          }
-
-         /* Update these specific classes in your <style> tag */
-
-.asset-cloud { 
-  position: absolute; 
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 280px; /* Reduced base size for better clarity */
-  /* Remove filter: blur() to make them visible! */
-  opacity: 0.8; 
-  user-select: none;
-  /* Added drop shadow for a 3D "pop" effect */
-  filter: drop-shadow(0 20px 40px rgba(0,0,0,0.5));
-  z-index: 5;
-}
-
-.c1 { 
-  top: 5%; 
-  left: 5%; 
-  transform: rotate(-15deg);
-  animation: float 12s infinite alternate ease-in-out; 
-}
-
-.c2 { 
-  bottom: 10%; 
-  right: 8%; 
-  font-size: 350px; /* Make this one the "hero" cloud */
-  transform: rotate(10deg);
-  animation: float 18s infinite alternate-reverse ease-in-out; 
-}
-
-.c3 { 
-  top: 20%; 
-  right: 20%; 
-  font-size: 150px;
-  opacity: 0.5;
-  transform: rotate(5deg);
-  animation: float 25s infinite alternate ease-in-out; 
-}
-
-/* Slightly more dynamic floating animation */
-@keyframes float { 
-  from { transform: translate(0, 0) rotate(-5deg); } 
-  to { transform: translate(30px, -20px) rotate(5deg); } 
-}
+          .cyber-grid-bg { position: absolute; inset: 0; background-image: linear-gradient(rgba(37,99,235,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,0.12) 1px, transparent 1px); background-size: 50px 50px; z-index: 1; }
+          .cloud-container { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+          .asset-cloud { position: absolute; display: flex; align-items: center; justify-content: center; font-size: 280px; opacity: 0.8; user-select: none; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.5)); z-index: 5; }
+          .c1 { top: 5%; left: 5%; transform: rotate(-15deg); animation: float 12s infinite alternate ease-in-out; }
+          .c2 { bottom: 10%; right: 8%; font-size: 350px; transform: rotate(10deg); animation: float 18s infinite alternate-reverse ease-in-out; }
+          .c3 { top: 20%; right: 20%; font-size: 150px; opacity: 0.5; transform: rotate(5deg); animation: float 25s infinite alternate ease-in-out; }
+          @keyframes float { from { transform: translate(0, 0) rotate(-5deg); } to { transform: translate(30px, -20px) rotate(5deg); } }
           .auth-card { width: 100%; max-width: 440px; background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.1); border-radius: 44px; padding: 55px; z-index: 10; text-align: center; color: white; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
           .logo-center-box { display: flex; justify-content: center; margin-bottom: 20px; }
           .brand-logo-main { width: 90px; height: 90px; object-fit: contain; }
@@ -337,6 +422,19 @@ function App() {
           .master-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; }
           .master-modal-card { background: #0a0a0a; border: 2px solid #2563eb; padding: 40px; border-radius: 30px; text-align: center; max-width: 400px; color: white; }
           .key-display { background: #000; color: #3b82f6; padding: 20px; font-family: monospace; border-radius: 10px; margin: 20px 0; border: 1px dashed #333; font-size: 18px; font-weight: bold; word-break: break-all; }
+          .top-right-ledger-btn { position: absolute; top: 30px; right: 40px; background: transparent; border: none; color: #22c55e; padding: 12px 24px; font-weight: 900; cursor: pointer; z-index: 100; font-size: 15px; letter-spacing: 1px; display: flex; align-items: center; }
+          .pulse-dot { display: inline-block; width: 12px; height: 12px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 10px #22c55e, 0 0 20px #22c55e; margin-right: 12px; animation: pulse-dot-anim 1.5s infinite; }
+          @keyframes pulse-dot-anim { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: 0.5; } 100% { transform: scale(1); opacity: 1; } }
+          .cyber-grid-bg-red { position: absolute; inset: 0; background-image: linear-gradient(rgba(255,0,0,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,0,0,0.1) 1px, transparent 1px); background-size: 40px 40px; }
+          .denied-card { z-index: 100; background: rgba(15, 0, 0, 0.95); border: 2px solid #ff0000; padding: 60px; border-radius: 40px; text-align: center; max-width: 480px; box-shadow: 0 0 50px rgba(255,0,0,0.2); border-bottom: 8px solid #ff0000; }
+          .denied-icon { font-size: 60px; margin-bottom: 20px; animation: pulse 1.5s infinite; }
+          .denied-title { color: #ff3333; font-weight: 900; letter-spacing: 2px; font-size: 24px; margin-bottom: 10px; }
+          .denied-divider { height: 1px; background: #ff0000; width: 50px; margin: 20px auto; opacity: 0.5; }
+          .denied-text { color: #888; line-height: 1.6; font-size: 14px; margin-bottom: 30px; }
+          .denied-status-box { background: #000; padding: 15px; border-radius: 12px; font-family: monospace; font-size: 10px; color: #555; text-align: left; margin-bottom: 30px; border: 1px solid #222; display: flex; flex-direction: column; gap: 5px; }
+          .denied-btn { width: 100%; padding: 18px; border-radius: 20px; border: 2px solid #ff3333; background: transparent; color: #ff3333; font-weight: 900; cursor: pointer; transition: 0.3s; }
+          .denied-btn:hover { background: #ff3333; color: #fff; }
+          @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
         `}</style>
       </div>
     );
@@ -388,6 +486,10 @@ function App() {
         );
     }
 
+    if (role === 'admin') {
+       return <MasterForensicDashboard />;
+    }
+
     return (
       <div className={`dash-container ${role === 'user' ? 'user-mode' : 'admin-mode'}`}>
         {role === 'admin' && (
@@ -425,7 +527,13 @@ function App() {
                         activeTab={activeTab} 
                         setActiveTab={setActiveTab} 
                         userModules={userModules} 
-                        setView={setView} 
+                        setView={setView}
+                        handleFileChange={handleFileChange}
+                        runFileEncryption={runFileEncryption}
+                        runDecryption={runDecryption}
+                        selectedFile={selectedFile}
+                        fileEncryptionResult={fileEncryptionResult} // Pass this so it can show the unique file ID
+                        downloadEncryptedFile={downloadEncryptedFile}
                       />
                    ) : (
                      <div className="action-btn-group">
@@ -478,7 +586,7 @@ function App() {
           .module-title-big { font-size: 48px; font-weight: 900; margin: 0 0 15px 0; letter-spacing: -1px; }
           .module-definition-big { color: #888; font-size: 18px; max-width: 600px; line-height: 1.5; }
           .forensic-grid { display: flex; gap: 30px; height: 70vh; width: 100%; max-width: 1600px; margin: 0 auto; align-items: stretch; }
-          .visualizer-box { flex: 2.5; background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 40px; display: flex; align-items: flex-start; justify-content: flex-start; position: relative; overflow: hidden; }
+          .visualizer-box { flex: 2.5; background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 40px; display: flex; align-items: flex-start; justify-content: flex-start; position: relative; overflow-y: auto; padding: 30px; }
           .telemetry-card { flex: 1; background: #0d0d0d; border: 1px solid #1a1a1a; border-radius: 40px; padding: 35px; height: 100%; box-sizing: border-box;}
           .floating-dock-sleek { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: 70%; max-width: 800px; background: rgba(10,10,10,0.85); backdrop-filter: blur(25px); border-radius: 24px; border: 1px solid rgba(255,255,255,0.05); padding: 6px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); }
           .dock-items-wrapper { display: flex; justify-content: space-around; align-items: center; padding: 2px 10px; }
@@ -494,7 +602,6 @@ function App() {
           .radar-circle { position: absolute; width: 300px; height: 300px; border: 1px solid rgba(37,99,235,0.1); border-radius: 50%; animation: radar 4s infinite linear; pointer-events: none; }
           @keyframes radar { 0% { transform: scale(0.6); opacity: 0; } 50% { opacity: 0.4; } 100% { transform: scale(1.8); opacity: 0; } }
           .btn-exit { margin-top: auto; padding: 15px; background: #111; color: #444; border: 1px solid #222; border-radius: 14px; font-size: 11px; font-weight: 800; cursor: pointer; }
-          .file-input-custom { width: 100%; padding: 15px; background: #000; border: 1px solid #222; color: #fff; border-radius: 15px; font-size: 14px; }
         `}</style>
       </div>
     );
