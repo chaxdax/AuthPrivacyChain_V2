@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE } from './config';
 
 const EmergencyRecovery = () => {
   const [masterKeyInput, setMasterKeyInput] = useState('');
@@ -23,7 +24,7 @@ const EmergencyRecovery = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('apc_token');
-      await axios.post('http://127.0.0.1:5000/verify-master-key', { 
+      await axios.post(`${API_BASE}/verify-master-key`, { 
         master_key: masterKeyInput,
         name: nameInput
       }, {
@@ -43,7 +44,6 @@ const EmergencyRecovery = () => {
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Strict Password Validation
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\W).+$/;
     if (!passwordRegex.test(newPassword)) {
       alert("SECURITY RISK: Password must contain at least one uppercase letter, one lowercase letter, and one special character.");
@@ -61,7 +61,7 @@ const EmergencyRecovery = () => {
         payload.old_password = oldPassword;
       }
 
-      await axios.post('http://127.0.0.1:5000/change-password', payload, {
+      await axios.post(`${API_BASE}/change-password`, payload, {
         headers: { 'x-access-token': token }
       });
       
@@ -86,7 +86,6 @@ const EmergencyRecovery = () => {
 
       <div className="recovery-container">
         
-        {/* TOP SECTION: MASTER KEY VALIDATION */}
         <div className="recovery-card">
           <h2 className="card-heading">1. VALIDATE MASTER KEY</h2>
           <p className="card-subtext">Paste the Master Recovery Key you received during registration to unlock password recovery.</p>
@@ -125,7 +124,6 @@ const EmergencyRecovery = () => {
           </form>
         </div>
 
-        {/* BOTTOM SECTION: CHANGE PASSWORD (UNLOCKED IF VALID OR USING OLD PASSWORD) */}
         <div className="recovery-card">
           <h2 className="card-heading">2. UPDATE PASSWORD FOR USER: <span style={{color: '#2563eb'}}>{localStorage.getItem('apc_user')}</span></h2>
           <p className="card-subtext">Ensure your new password meets the strict platform requirements.</p>

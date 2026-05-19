@@ -2,6 +2,7 @@ import UserDashboard from './UserDashboard';
 import MasterForensicDashboard from './admin/MasterForensicDashboard';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE } from './config';
 
 const LOGO_PATH = "/logo.png";
 
@@ -13,6 +14,7 @@ function App() {
   
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [legalName, setLegalName] = useState('');
   const [token, setToken] = useState<string | null>(null);
 
@@ -20,6 +22,7 @@ function App() {
   const [generatedKey, setGeneratedKey] = useState('');
   const [showLedger, setShowLedger] = useState(false);
   const [fullScreenAlert, setFullScreenAlert] = useState(false);
+  const [showLockdownAlert, setShowLockdownAlert] = useState(false);
   const [showRecoveryModal, setShowRecoveryModal] = useState(false);
   const [recoveryName, setRecoveryName] = useState('');
   const [recoveryKey, setRecoveryKey] = useState('');
@@ -27,7 +30,6 @@ function App() {
   const [ledgerAlert, setLedgerAlert] = useState<{filename: string, owner: string} | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  // UPDATED: Added file_id to the type definition here
   const [fileEncryptionResult, setFileEncryptionResult] = useState<{iv: string, encrypted_data: string, filename: string, file_id: string} | null>(null);
 
   const adminModules = [
@@ -61,13 +63,11 @@ function App() {
     }
   }, []);
 
-  // Use refs to avoid re-binding listeners on every state change
   const stateRef = React.useRef({ identity, token, role, view, activeTab });
   useEffect(() => {
     stateRef.current = { identity, token, role, view, activeTab };
   }, [identity, token, role, view, activeTab]);
 
-  // GLOBAL API TRACKER: Records only MAJOR User API requests
   useEffect(() => {
     const requestInterceptor = axios.interceptors.request.use((config) => {
       const { role: r, identity: id, token: t, view: v, activeTab: at } = stateRef.current;
@@ -86,14 +86,13 @@ function App() {
         url_route: `/${v}/${at || ''}`.replace(/\/+/g, '/')
       };
       
-      axios.post('http://127.0.0.1:5000/track-click', payload).catch(() => {});
+      axios.post(`${API_BASE}/track-click`, payload).catch(() => {});
       return config;
     });
 
     return () => axios.interceptors.request.eject(requestInterceptor);
   }, []);
 
-  // GLOBAL CLICK-STREAM TRACKER: Stable listener that never misses a click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       const { role: r, identity: id, token: t, view: v, activeTab: at } = stateRef.current;
@@ -124,12 +123,11 @@ function App() {
         url_route: `/${v}/${at || ''}`.replace(/\/+/g, '/')
       };
 
-      axios.post('http://127.0.0.1:5000/track-click', payload).catch(() => {});
+      axios.post(`${API_BASE}/track-click`, payload).catch(() => {});
     };
 
     window.addEventListener('click', handleClick);
 
-    // RESPONSE INTERCEPTOR FOR GEOFENCING & LOCKDOWN
     const responseInterceptor = axios.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -148,7 +146,7 @@ function App() {
 
   const fetchLedgerFiles = async () => {
     try {
-      const res = await axios.get('http://127.0.0.1:5000/public-ledger');
+      const res = await axios.get(`${API_BASE}/public-ledger`);
       setLedgerFiles(res.data);
     } catch (err) {
       console.error("Failed to fetch ledger files", err);
@@ -157,8 +155,7 @@ function App() {
 
   const handleHackAttempt = async (real_id: string) => {
     try {
-      const res = await axios.post('http://127.0.0.1:5000/hack-attempt', { file_id: real_id });
-      // Show red alert INSIDE the ledger window, NOT the VPN geofence alert
+      const res = await axios.post(`${API_BASE}/hack-attempt`, { file_id: real_id });
       setLedgerAlert({ filename: res.data.filename || 'UNKNOWN_FILE', owner: res.data.owner_display || 'UNKNOWN' });
     } catch (error) {
       console.error("Hack attempt log failed", error);
@@ -196,10 +193,9 @@ function App() {
     formData.append('file', selectedFile);
     const token = localStorage.getItem('apc_token');
     try {
-      const response = await axios.post('http://127.0.0.1:5000/encrypt', formData, {
+      const response = await axios.post(`${API_BASE}/encrypt`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'x-access-token': token }
       });
-      // UPDATED: Now saving the entire response which includes file_id/unique hash
       setFileEncryptionResult(response.data);
       alert(`File AES-256 Encryption Complete. ID: ${response.data.file_id}`);
     } catch (error) { alert("Encryption Failed. Ensure you are logged in."); }
@@ -219,7 +215,7 @@ function App() {
   const runDecryption = async () => {
     if(!fileEncryptionResult) return;
     try {
-        const response = await axios.post('http://127.0.0.1:5000/decrypt', {
+        const response = await axios.post(`${API_BASE}/decrypt`, {
             encrypted_data: fileEncryptionResult.encrypted_data,
             iv: fileEncryptionResult.iv
         });
@@ -239,18 +235,27 @@ function App() {
     e.preventDefault();
     if (!recoveryName || !recoveryKey) return;
     try {
-      const response = await axios.post('http://127.0.0.1:5000/request-recovery', { 
+      const response = await axios.post(`${API_BASE}/request-recovery`, { 
         name: recoveryName, 
         masterKey: recoveryKey 
       });
+
       if (response.status === 200) {
-         loginSuccess(response.data);
-         setShowRecoveryModal(false);
-      } else {
-         alert(response.data.message);
-         if (response.status === 201) setShowRecoveryModal(false);
+        loginSuccess(response.data);
+        setShowRecoveryModal(false);
+        setRecoveryName('');
+        setRecoveryKey('');
+      } else if (response.status === 202) {
+        alert("⏳ Your recovery request is still pending Admin approval. Please try again after Admin approves it.");
+      } else if (response.status === 201) {
+        alert("✅ Recovery Request sent to Admin queue!\n\nOnce the Admin approves your request, come back here and submit again to auto-login.");
+        setShowRecoveryModal(false);
+        setRecoveryName('');
+        setRecoveryKey('');
       }
-    } catch (error: any) { alert(error.response?.data?.message || "Invalid Master Key!"); }
+    } catch (error: any) { 
+      alert(error.response?.data?.message || "Invalid Master Key or Name. Please check and try again."); 
+    }
   };
 
   const handleAction = async (e: React.FormEvent) => {
@@ -276,7 +281,7 @@ function App() {
     const endpoint = view === 'signup' ? '/register' : '/login';
     
     try {
-      const response = await axios.post(`http://127.0.0.1:5000${endpoint}`, { 
+      const response = await axios.post(`${API_BASE}${endpoint}`, { 
         userID: identity, 
         password: password,
         legalName: legalName
@@ -291,9 +296,13 @@ function App() {
     } catch (error: any) { 
       console.error("Auth Error:", error);
       if (error.response?.status === 403) {
-        setFullScreenAlert(true);
+        if (error.response?.data?.message?.includes('LOCKDOWN')) {
+          setShowLockdownAlert(true);
+        } else {
+          setFullScreenAlert(true);
+        }
       } else {
-        alert(error.response?.data?.message || "Connection Failed! Is Flask running on port 5000?"); 
+        alert(error.response?.data?.message || "Connection Failed! Is the backend server running?"); 
       }
     }
   };
@@ -385,6 +394,30 @@ function App() {
             </div>
           </div>
         )}
+        {showLockdownAlert && (
+          <div className="geofence-shield-overlay" style={{background: '#1a0505'}}>
+            <div className="cyber-grid-red"></div>
+            <div className="shield-container">
+              <div className="shield-icon-wrap" style={{borderColor: '#ff0000', boxShadow: '0 0 50px rgba(255,0,0,0.5)'}}>
+                <span style={{fontSize: '60px', animation: 'pulse 1.5s infinite'}}>🔒</span>
+              </div>
+              <div className="shield-content">
+                <h1 className="shield-title" style={{color: '#ff0000', textShadow: '0 0 20px #ff0000'}}>SYSTEM LOCKDOWN ACTIVE</h1>
+                <div className="shield-separator">
+                  <div className="sep-red" style={{width: '100%'}}></div>
+                </div>
+                <p className="shield-msg" style={{color: '#fff', fontSize: '18px', fontWeight: 'bold'}}>
+                  Administrator has initiated an Emergency Lockdown.
+                  <br /><br />
+                  <span style={{color: '#ef4444'}}>ALL LOGINS ARE TEMPORARILY DISABLED.</span>
+                </p>
+                <button className="shield-dismiss-btn" onClick={() => setShowLockdownAlert(false)} style={{borderColor: '#ff0000', color: '#ff0000', marginTop: '30px'}}>
+                  CLOSE
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {showLedger && (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 99999,
@@ -392,7 +425,6 @@ function App() {
             display: 'flex', flexDirection: 'column',
             fontFamily: 'sans-serif'
           }}>
-            {/* INFILTRATION ALERT POPUP */}
             {ledgerAlert && (
               <div style={{
                 position: 'absolute', top: '30px', left: '50%', transform: 'translateX(-50%)',
@@ -416,7 +448,6 @@ function App() {
               </div>
             )}
 
-            {/* HEADER */}
             <div style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '28px 48px', borderBottom: '1px solid #1a1a1a'
@@ -440,7 +471,6 @@ function App() {
               }}>✖</button>
             </div>
 
-            {/* TABLE HEADER */}
             <div style={{
               display: 'grid', gridTemplateColumns: '150px 1fr 200px 160px',
               padding: '14px 48px', borderBottom: '1px solid #111',
@@ -452,11 +482,9 @@ function App() {
               <span style={{textAlign: 'right'}}>ACTION</span>
             </div>
 
-            {/* FILE ROWS */}
             <div style={{flex: 1, overflowY: 'auto', padding: '12px 36px'}}>
               {(!ledgerFiles || ledgerFiles.length === 0) ? (
                 <div style={{textAlign: 'center', color: '#333', marginTop: '80px', fontSize: '12px', fontWeight: 700, letterSpacing: '2px'}}>
-                  // NO_PUBLIC_NODES_DETECTED_IN_SECTOR
                 </div>
               ) : (
                 ledgerFiles.map((file, i) => (
@@ -489,7 +517,6 @@ function App() {
               )}
             </div>
 
-            {/* FOOTER */}
             <div style={{
               padding: '18px 48px', borderTop: '1px solid #111',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center'
@@ -524,7 +551,7 @@ function App() {
             <div className="toggle-switcher">
               <div className={`switch-pill ${role === 'admin' ? 'pos-admin' : 'pos-user'}`}></div>
               <button type="button" className={role === 'user' ? 'active' : ''} onClick={() => { setRole('user'); setIdentity(''); setPassword(''); }}>USER GATEWAY</button>
-              <button type="button" className={role === 'admin' ? 'active' : ''} onClick={() => { setRole('admin'); setIdentity(''); setPassword(''); }}>ADMIN MODE</button>
+              <button type="button" className={role === 'admin' ? 'active' : ''} onClick={() => { setRole('admin'); setIdentity(''); setPassword(''); setView('login'); }}>ADMIN MODE</button>
             </div>
 
             <form onSubmit={handleAction}>
@@ -536,18 +563,34 @@ function App() {
               )}
               <div className="cyber-field">
                 <label>{role === 'admin' ? 'ADMINISTRATOR TOKEN' : (view === 'signup' ? 'PHONE NUMBER' : 'UNIQUE ID')}</label>
-                <input type="text" placeholder={role === 'admin' ? "ADM-777" : "Enter ID..."} required value={identity} onChange={(e) => setIdentity(e.target.value)} autoComplete="off" />
+                <input 
+                  type="text" 
+                  placeholder={role === 'admin' ? "ADM-777" : (view === 'signup' ? "91XXXXXXXXXX" : "Enter ID...")} 
+                  required 
+                  value={identity} 
+                  onChange={(e) => setIdentity(e.target.value)} 
+                  autoComplete="off" 
+                />
               </div>
               <div className="cyber-field">
                 <label>ENCRYPTION PASSPHRASE</label>
-                <input type="password" placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+                <div style={{position: 'relative', display: 'flex', alignItems: 'center'}}>
+                  <input type={showPassword ? "text" : "password"} placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" style={{flex: 1, paddingRight: '40px'}} />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} style={{position: 'absolute', right: '15px', background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '14px', padding: 0}}>
+                    {showPassword ? "👁️‍🗨️" : "👁️"}
+                  </button>
+                </div>
               </div>
               <button type="submit" className="cyber-btn">{view === 'login' ? 'ESTABLISH LINK' : 'CREATE ACCOUNT'}</button>
               <div className="auth-footer-links">
-                <button type="button" className="signup-link" onClick={() => { setView(view === 'login' ? 'signup' : 'login'); setIdentity(''); setPassword(''); }}>
-                  {view === 'login' ? '// New here? Join the family.' : '// Back to Login'}
-                </button>
-                <button type="button" className="v1-shortcut" onClick={() => setShowRecoveryModal(true)}>[ MASTER KEY ] QUICK ACCESS</button>
+                {role === 'user' && (
+                  <>
+                    <button type="button" className="signup-link" onClick={() => { setView(view === 'login' ? 'signup' : 'login'); setIdentity(''); setPassword(''); }}>
+                      {view === 'login' ? '// New here? Join the family.' : '// Back to Login'}
+                    </button>
+                    <button type="button" className="v1-shortcut" onClick={() => setShowRecoveryModal(true)}>[ MASTER KEY ] QUICK ACCESS</button>
+                  </>
+                )}
               </div>
             </form>
           </div>
@@ -620,17 +663,159 @@ function App() {
             .shield-dismiss-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px rgba(255,255,255,0.3); }
           `}</style>
         </div>
+
+        {showMasterModal && (
+          <div className="master-modal-overlay" onClick={() => setShowMasterModal(false)}>
+            <div className="master-modal-card" onClick={e => e.stopPropagation()}>
+              <div style={{fontSize: '40px', marginBottom: '12px'}}>🔑</div>
+              <h2 style={{margin: '0 0 8px', fontSize: '18px', fontWeight: 900, letterSpacing: '1px'}}>MASTER RECOVERY KEY</h2>
+              <p style={{fontSize: '11px', color: '#666', marginBottom: '20px', lineHeight: 1.7}}>
+                Save this key securely. It is the <strong style={{color:'#fff'}}>ONLY</strong> way to recover your account if you forget your password.
+              </p>
+              <div className="key-display">{generatedKey}</div>
+              <button className="cyber-btn" style={{marginTop: '10px'}} onClick={() => { setShowMasterModal(false); }}>
+                I HAVE SAVED MY KEY
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showRecoveryModal && (
+          <div className="master-modal-overlay" onClick={() => setShowRecoveryModal(false)}>
+            <div className="master-modal-card" style={{maxWidth: '460px', width: '90%', textAlign: 'left'}} onClick={e => e.stopPropagation()}>
+              <div style={{textAlign: 'center', marginBottom: '28px'}}>
+                <div style={{fontSize: '36px', marginBottom: '10px'}}>🛡️</div>
+                <h2 style={{margin: '0 0 6px', fontSize: '17px', fontWeight: 900, letterSpacing: '2px', color: '#fff'}}>MASTER KEY RECOVERY</h2>
+                <p style={{fontSize: '11px', color: '#555', lineHeight: 1.7, margin: 0}}>
+                  Enter your legal name and recovery key.<br/>
+                  Your request will be sent to the Admin queue for approval.
+                </p>
+              </div>
+
+              <form onSubmit={handleMasterRecoverySubmit} style={{display: 'flex', flexDirection: 'column', gap: '18px'}}>
+                <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                  <label style={{fontSize: '9px', fontWeight: 900, color: '#2563eb', letterSpacing: '2px', fontFamily: 'monospace'}}>LEGAL NAME</label>
+                  <input
+                    type="text"
+                    placeholder="Enter your full registered name..."
+                    value={recoveryName}
+                    onChange={e => setRecoveryName(e.target.value)}
+                    required
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      padding: '14px 18px',
+                      borderRadius: '14px',
+                      color: '#fff',
+                      fontFamily: 'monospace',
+                      fontSize: '14px',
+                      outline: 'none',
+                      width: '100%',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                  <label style={{fontSize: '9px', fontWeight: 900, color: '#2563eb', letterSpacing: '2px', fontFamily: 'monospace'}}>MASTER RECOVERY KEY</label>
+                  <input
+                    type="text"
+                    placeholder="XXXX-XXXX-XXXX-XXXX"
+                    value={recoveryKey}
+                    onChange={e => setRecoveryKey(e.target.value)}
+                    required
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      padding: '14px 18px',
+                      borderRadius: '14px',
+                      color: '#fff',
+                      fontFamily: 'monospace',
+                      fontSize: '14px',
+                      outline: 'none',
+                      width: '100%',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div style={{
+                  background: 'rgba(37,99,235,0.06)',
+                  border: '1px solid rgba(37,99,235,0.2)',
+                  borderRadius: '12px',
+                  padding: '14px 16px',
+                  fontSize: '11px',
+                  color: '#666',
+                  lineHeight: 1.7
+                }}>
+                  <span style={{color: '#2563eb', fontWeight: 900}}>HOW IT WORKS: </span>
+                  Submit your request → Admin reviews &amp; approves → Submit again to auto-login.
+                </div>
+
+                <div style={{display: 'flex', gap: '12px', marginTop: '4px'}}>
+                  <button
+                    type="button"
+                    onClick={() => setShowRecoveryModal(false)}
+                    style={{
+                      flex: 1, padding: '14px', borderRadius: '14px',
+                      background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#666', fontWeight: 900, cursor: 'pointer',
+                      fontSize: '11px', letterSpacing: '1px'
+                    }}
+                  >CANCEL</button>
+                  <button
+                    type="submit"
+                    style={{
+                      flex: 2, padding: '14px', borderRadius: '14px',
+                      background: '#2563eb', border: 'none',
+                      color: '#fff', fontWeight: 900, cursor: 'pointer',
+                      fontSize: '11px', letterSpacing: '2px',
+                      fontFamily: 'monospace'
+                    }}
+                  >SEND RECOVERY REQUEST →</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </>
     );
   }
 
   if (view === 'home') {
     return (
-      <div className="home-original">
+      <div className={`home-original ${role === 'user' ? 'user-home-animated' : ''}`}>
         <div className="home-glow"></div>
         <div className="home-content-centered">
           <div className="logo-center-box"><img src={LOGO_PATH} alt="Brand Logo" className="home-logo-img" /></div>
-          <h1>{role === 'user' ? 'Initiating AuthPrivacyChain' : 'AuthPrivacyChain V2'}</h1>
+          {role === 'user' ? (
+            <h1 className="animated-heading-user" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {"Initiating AuthPrivacyChain".split("").map((char, index) => {
+                const randomX = Math.floor(Math.random() * 1200 - 600); 
+                const randomY = Math.floor(Math.random() * 800 - 600);  
+                const randomRot = Math.floor(Math.random() * 360 - 180);
+                const delay = Math.random() * 0.8;
+                return (
+                  <span 
+                    key={index} 
+                    className="animated-letter"
+                    style={{
+                      display: 'inline-block',
+                      whiteSpace: char === ' ' ? 'pre' : 'normal',
+                      animation: `fallAndForm 1.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards`,
+                      animationDelay: `${delay}s`,
+                      transform: `translate(${randomX}px, ${randomY}px) rotate(${randomRot}deg)`,
+                      opacity: 0,
+                    } as React.CSSProperties}
+                  >
+                    {char}
+                  </span>
+                );
+              })}
+            </h1>
+          ) : (
+            <h1>AuthPrivacyChain V2</h1>
+          )}
           <p className="encryption-text">Advanced Cloud Security powered by Blockchain <br /> & AES-256 Encryption.</p>
           <div className="home-btns-centered">
             <button onClick={() => { setView('admin_dash'); setActiveTab(currentModules[0].name); }} className="btn-dash">{role === 'user' ? 'Enter Cloud Vault' : 'Launch Dashboard'}</button>
@@ -647,6 +832,87 @@ function App() {
           .home-btns-centered { display: flex; gap: 20px; justify-content: center; }
           .btn-dash { padding: 16px 40px; background: white; color: black; border-radius: 50px; font-weight: 700; border: none; cursor: pointer; }
           .btn-logout { padding: 16px 40px; border: 1px solid #333; color: #666; border-radius: 50px; background: none; cursor: pointer; }
+
+          /* User side animation specific styling */
+          .user-home-animated .logo-center-box {
+            opacity: 0;
+            transform: translateY(-800px) scale(0.3);
+            animation: logoFallDrop 1.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            animation-delay: 2.8s;
+          }
+          
+          .user-home-animated .animated-heading-user {
+            font-size: 52px;
+            font-weight: 800;
+            letter-spacing: -2px;
+            margin-bottom: 10px;
+          }
+          
+          .user-home-animated .encryption-text {
+            font-size: 18px;
+            color: #888;
+            margin-bottom: 40px;
+            opacity: 0;
+            animation: fadeInSubtitle 1.2s ease-out forwards;
+            animation-delay: 1.6s;
+          }
+          
+          .user-home-animated .home-btns-centered {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            opacity: 0;
+            transform: translateY(40px);
+            animation: slideUpFadeIn 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            animation-delay: 2.1s;
+          }
+
+          @keyframes fallAndForm {
+            0% {
+              opacity: 0;
+            }
+            15% {
+              opacity: 0.7;
+            }
+            100% {
+              transform: translate(0, 0) rotate(0deg);
+              opacity: 1;
+            }
+          }
+
+          @keyframes logoFallDrop {
+            0% {
+              opacity: 0;
+              transform: translateY(-800px) scale(0.3) rotate(-45deg);
+            }
+            45% {
+              opacity: 1;
+              transform: translateY(0) scale(1.1) rotate(5deg);
+            }
+            65% {
+              transform: translateY(-25px) scale(0.95) rotate(-2deg);
+            }
+            80% {
+              transform: translateY(8px) scale(1.02) rotate(1deg);
+            }
+            100% {
+              opacity: 1;
+              transform: translateY(0) scale(1) rotate(0deg);
+            }
+          }
+
+          @keyframes fadeInSubtitle {
+            to {
+              opacity: 0.7;
+            }
+          }
+
+          @keyframes slideUpFadeIn {
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
         `}</style>
       </div>
     );
@@ -675,8 +941,11 @@ function App() {
     }
 
     return (
-      <div className={`dash-container ${role === 'user' ? 'user-mode' : 'admin-mode'}`}>
-        {role === 'admin' && (
+      <div 
+        className={`dash-container ${role === 'user' ? 'user-mode' : 'admin-mode'}`}
+        style={role === 'user' ? { background: 'linear-gradient(135deg, #FCFBF8 0%, #F4F1EA 50%, #EAE5DA 100%)', color: '#2D3436' } : {}}
+      >
+        {(role as string) === 'admin' && (
           <aside className="sidebar-cyber">
             <div className="sidebar-header">
               <img src={LOGO_PATH} alt="Logo" className="sidebar-logo" />

@@ -19,7 +19,7 @@ def full_reset():
     cursor.execute('''CREATE TABLE activity_logs 
                       (id TEXT PRIMARY KEY, owner_id TEXT, actor_identity TEXT, action TEXT, target_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     cursor.execute('''CREATE TABLE alerts
-                      (id TEXT PRIMARY KEY, owner_id TEXT, actor_ip TEXT, file_id TEXT, severity TEXT, alert_message TEXT, resolved INTEGER DEFAULT 0, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+                      (id TEXT PRIMARY KEY, owner_id TEXT, actor_ip TEXT, file_id TEXT, severity TEXT, alert_message TEXT, resolved INTEGER DEFAULT 0, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, country TEXT)''')
     cursor.execute('''CREATE TABLE recovery_requests
                       (id TEXT PRIMARY KEY, user_id TEXT, name_entered TEXT, status TEXT DEFAULT 'PENDING', timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     cursor.execute('''CREATE TABLE clickstream_logs

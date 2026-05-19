@@ -1,0 +1,40 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Backend: Flask (app.py)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/backend/app.py",
+            "cwd": "${workspaceFolder}/backend",
+            "python": "${workspaceFolder}/backend/venv/bin/python3",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Frontend: NPM (Vite)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "npm run dev",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Full System (Backend + Frontend)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "python3 run_system.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Launch Both",
+            "configurations": [
+                "Backend: Flask (app.py)",
+                "Frontend: NPM (Vite)"
+            ],
+            "stopAll": true
+        }
+    ]
+}

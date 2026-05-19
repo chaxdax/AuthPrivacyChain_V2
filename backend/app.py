@@ -17,10 +17,12 @@ from permission_logic import perm_bp
 from admin_routes import admin_bp
 from clickstream_tracker import clickstream_bp
 from services.activity_logger import log_activity
+from unauth_routes import unauth_bp
+from user_mgmt_routes import user_mgmt_bp
 
 app = Flask(__name__)
 
-# UPDATED: Comprehensive CORS for local and production environments
+
 CORS(app, resources={r"/*": {"origins": [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -33,6 +35,8 @@ app.config['SECRET_KEY'] = 'SYSTEM_SECURE_SIGMA_99'
 app.register_blueprint(perm_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(clickstream_bp)
+app.register_blueprint(unauth_bp)
+app.register_blueprint(user_mgmt_bp)
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 db_path = os.path.join(basedir, 'auth_chain.db')
@@ -61,7 +65,7 @@ def init_db():
                        shared_with_username TEXT, 
                        status TEXT)''')
     
-    # Activity Logs Table - The heart of your Forensics Feed
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS activity_logs 
                       (id TEXT PRIMARY KEY, 
                        owner_id TEXT, 
@@ -70,7 +74,6 @@ def init_db():
                        action TEXT, 
                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
                        
-    # Click-stream Logs Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS clickstream_logs
                       (id TEXT PRIMARY KEY,
                        user_id TEXT,
@@ -81,12 +84,10 @@ def init_db():
                        ip_address TEXT,
                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
                        
-    # System Config Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS system_config
                       (key TEXT PRIMARY KEY, value TEXT)''')
     cursor.execute("INSERT OR IGNORE INTO system_config (key, value) VALUES ('LOCKDOWN', '0')")
 
-    # Alerts Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS alerts 
                       (id TEXT PRIMARY KEY, 
                        owner_id TEXT, 
@@ -95,9 +96,9 @@ def init_db():
                        severity TEXT, 
                        alert_message TEXT, 
                        resolved INTEGER DEFAULT 0, 
-                       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+                       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                       country TEXT)''')
     
-    # Recovery Requests Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS recovery_requests
                       (id TEXT PRIMARY KEY, 
                        user_id TEXT, 
@@ -122,18 +123,15 @@ def token_required(f):
         if not token:
             return jsonify({'message': 'Token is missing!'}), 401
         
-        # Admin Bypass is near-instant
         if token == 'admin-bypass':
             return f('ADM-777', *args, **kwargs)
 
         try:
-            # Decode once and reuse
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             current_user_id = data['public_id']
         except:
             return jsonify({'message': 'Token is invalid!'}), 401
 
-        # GEOFENCING ENFORCEMENT (Optimized)
         ip = request.headers.get('X-Forwarded-For', request.remote_addr or "127.0.0.1")
         if ',' in ip: ip = ip.split(',')[0].strip()
         
@@ -171,22 +169,50 @@ def register():
         conn.commit()
         conn.close()
         
-        # Send SMS via AppleScript
         import subprocess
-        clean_phone = user_id_input.replace(" ", "").replace("-", "")
-        apple_script = f'''
+        phone = user_id_input.replace(" ", "").replace("-", "").replace("+", "")
+        if not phone.startswith('91'):
+            phone = '91' + phone
+        clean_phone = '+' + phone
+
+        sms_message = f"Welcome to Batch 33's AuthPrivacyChain UserID: {numeric_id} Password: {password}"
+        sms_message_escaped = sms_message.replace('"', '\\"')
+
+        # Try SMS service first (requires iPhone Text Message Forwarding), then iMessage
+        apple_script = f"""
         tell application "Messages"
             activate
-            delay 1
-            send "Welcome to Batch 33's AuthPrivacyChain UserID: {numeric_id} Password: {password}" to buddy "{clean_phone}"
+            delay 2
+            set didSend to false
+            set allServices to every service
+            repeat with s in allServices
+                try
+                    set sType to (service type of s) as string
+                    if sType is "SMS" or sType is "iMessage" or sType is "RCS" then
+                        set b to buddy "{clean_phone}" of s
+                        send "{sms_message_escaped}" to b
+                        set didSend to true
+                        exit repeat
+                    end if
+                on error
+                end try
+            end repeat
+            if didSend is false then
+                error "No valid service found for " & "{clean_phone}"
+            end if
         end tell
-        '''
+        """
         try:
-            subprocess.run(['osascript', '-e', apple_script], capture_output=True, text=True, check=False)
+            result = subprocess.run(['osascript', '-e', apple_script], capture_output=True, text=True, check=False, timeout=30)
+            if result.returncode != 0:
+                print(f"[SMS] AppleScript Error: {result.stderr.strip()}")
+            else:
+                print(f"[SMS] Sent successfully to {clean_phone}")
+        except subprocess.TimeoutExpired:
+            print("[SMS] Timed out — Messages app took too long.")
         except Exception as e:
-            print("Failed to send SMS:", e)
+            print(f"[SMS] Exception: {e}")
 
-        # Log Registration Action
         log_activity(internal_uuid, numeric_id, "System", "USER_REGISTERED")
         
         return jsonify({"message": f"Account Created! Unique ID {numeric_id} sent via SMS", "masterKey": user_master_key}), 201
@@ -200,11 +226,15 @@ def login():
     if user_id_val:
         user_id_val = str(user_id_val).strip()
     
-    # GEOFENCING ENFORCEMENT: Block Login attempts from foreign IPs
     ip = request.headers.get('X-Forwarded-For', request.remote_addr or "127.0.0.1")
     if ',' in ip: ip = ip.split(',')[0].strip()
     
-    # Try to resolve user_id_val to the internal UUID for consistent logging
+    conn = sqlite3.connect(db_path)
+    ld_row = conn.execute("SELECT value FROM system_config WHERE key='LOCKDOWN'").fetchone()
+    if ld_row and ld_row[0] == '1':
+        conn.close()
+        return jsonify({"message": "SYSTEM LOCKDOWN ACTIVE: All logins are temporarily disabled."}), 403
+    
     log_owner_id = 'ANONYMOUS'
     if user_id_val:
         conn = sqlite3.connect(db_path)
@@ -235,7 +265,6 @@ def login():
     if not user or not check_password_hash(user['password'], data.get('password', '')):
         return jsonify({"message": "Invalid ID or Password"}), 401
 
-    # Log Successful Login
     log_activity(user['id'], user['numeric_id'], "SYS", "USER_LOGIN_SUCCESS")
 
     token = jwt.encode({
@@ -245,16 +274,13 @@ def login():
 
     return jsonify({'token': token, 'role': 'user', 'identity': user['numeric_id']})
 
-# UPDATED: Fetch Activity Logs with strictly enforced user isolation
 @app.route('/activity-logs', methods=['GET'])
 @token_required
 def get_activity_logs(current_user_id):
     conn = sqlite3.connect(db_path)
-    # Using Row factory for safer data mapping
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # Only fetches logs belonging to the current_user_id
     cursor.execute("""
         SELECT actor_identity, target_name, action, timestamp 
         FROM activity_logs 
@@ -293,7 +319,6 @@ def upload(current_user_id):
                    (file_id, current_user_id, file.filename, 0, filepath))
     conn.commit()
 
-    # Log the Upload action
     cursor.execute("SELECT numeric_id as username FROM users WHERE id=?", (current_user_id,))
     user_row = cursor.fetchone()
     if user_row:
@@ -348,7 +373,6 @@ def get_alerts(current_user_id):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    # Fetch alerts related to the user OR anonymous breaches (Privacy Isolation + Transparency)
     cursor.execute('''
         SELECT a.id, a.severity, a.alert_message, a.actor_ip as user, a.resolved, a.timestamp
         FROM alerts a
@@ -366,7 +390,6 @@ def get_alerts(current_user_id):
 def resolve_alert(current_user_id, alert_id):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    # Ensure the user can resolve their own alerts or anonymous breaches
     cursor.execute("UPDATE alerts SET resolved=1 WHERE id=? AND (owner_id=? OR owner_id='ANONYMOUS')", (alert_id, current_user_id))
     conn.commit()
     conn.close()
@@ -432,7 +455,6 @@ def toggle_emergency_lockdown(current_user_id):
     new_value = '0' if currently_locked else '1'
     cursor.execute("UPDATE system_config SET value=? WHERE key='LOCKDOWN'", (new_value,))
     
-    # Log the action
     log_id = str(uuid.uuid4())
     action = "LOCKDOWN_LIFTED" if currently_locked else "CRITICAL_LOCKDOWN"
     cursor.execute("INSERT INTO activity_logs (id, owner_id, actor_identity, action, target_name) VALUES (?, ?, ?, ?, ?)",
@@ -466,7 +488,6 @@ def download(current_user_id, file_id):
         path = file_data['path']
         filename = file_data['filename']
         
-        # LOG FILE DECRYPTION & DOWNLOAD
         log_activity(current_user_id, user_row['username'], filename, "FILE_DECRYPT_DOWNLOAD")
 
         if bool(file_data['is_encrypted']):
@@ -504,7 +525,6 @@ def delete_file(current_user_id, file_id):
         if os.path.exists(path): os.remove(path)
         cursor.execute("DELETE FROM files WHERE id=?", (file_id,))
         
-        # Log the deletion
         cursor.execute("SELECT numeric_id as username FROM users WHERE id=?", (current_user_id,))
         user_row = cursor.fetchone()
         if user_row:
@@ -536,13 +556,11 @@ def request_recovery():
     user_id = user['id']
     numeric_id = user['numeric_id']
     
-    # Check for existing request
     cursor.execute("SELECT * FROM recovery_requests WHERE user_id=? ORDER BY timestamp DESC LIMIT 1", (user_id,))
     req = cursor.fetchone()
     
     if req:
         if req['status'] == 'APPROVED':
-            # Generate token for the recovered user
             token = jwt.encode({
                 'public_id': user_id,
                 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
@@ -559,7 +577,6 @@ def request_recovery():
             conn.close()
             return jsonify({"message": "Your recovery request is still pending admin approval."}), 202
             
-    # Insert new request
     req_id = str(uuid.uuid4())
     cursor.execute("INSERT INTO recovery_requests (id, user_id, name_entered, status) VALUES (?, ?, ?, 'PENDING')",
                    (req_id, user_id, name_entered))
@@ -572,16 +589,13 @@ def request_recovery():
 def public_ledger():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    # Fetch random uploaded files
     cursor.execute("SELECT id, filename FROM files ORDER BY RANDOM() LIMIT 20")
     files = cursor.fetchall()
     conn.close()
     
-    # Return fake IDs for privacy
     ledger_data = []
     for f in files:
         real_id = f[0]
-        # fake_id is just a display string like #9A2F8X
         import hashlib
         fake_id = "#" + hashlib.md5(real_id.encode()).hexdigest()[:6].upper()
         ledger_data.append({"id": real_id, "fake_id": fake_id, "filename": f[1]})
@@ -599,7 +613,6 @@ def hack_attempt():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        # Find the owner of this specific file
         cursor.execute("SELECT user_id, filename FROM files WHERE id=?", (file_id,))
         file_record = cursor.fetchone()
         
@@ -607,7 +620,6 @@ def hack_attempt():
             owner_id = file_record['user_id']
             filename = file_record['filename']
             
-            # Get the owner's numeric ID for display
             cursor.execute("SELECT numeric_id FROM users WHERE id=?", (owner_id,))
             owner_row = cursor.fetchone()
             owner_display = owner_row['numeric_id'] if owner_row else owner_id
@@ -615,17 +627,14 @@ def hack_attempt():
             msg_owner = f"CRITICAL: Unauthorized decryption attempt on your file '{filename}' from IP: {ip_address}"
             msg_admin = f"INFILTRATION DETECTED: File '{filename}' (Owner: {owner_display}) targeted from IP: {ip_address}"
             
-            # 1. Alert to the file owner
             alert_id = str(uuid.uuid4())
             cursor.execute("INSERT INTO alerts (id, owner_id, actor_ip, file_id, severity, alert_message) VALUES (?, ?, ?, ?, ?, ?)",
                            (alert_id, owner_id, ip_address, file_id, "CRITICAL", msg_owner))
             
-            # 2. Alert to Admin
             admin_alert_id = str(uuid.uuid4())
             cursor.execute("INSERT INTO alerts (id, owner_id, actor_ip, file_id, severity, alert_message) VALUES (?, ?, ?, ?, ?, ?)",
                            (admin_alert_id, 'ADM-777', ip_address, file_id, "CRITICAL", msg_admin))
             
-            # 3. Log in activity_logs for forensic feed
             log_id = str(uuid.uuid4())
             cursor.execute("INSERT INTO activity_logs (id, owner_id, actor_identity, action, target_name) VALUES (?, ?, ?, ?, ?)",
                            (log_id, owner_id, f"IP:{ip_address}", "SECURITY_BREACH", filename))
@@ -656,28 +665,23 @@ def verify_master_key(current_user_id):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Check if the master key belongs to ANY user (System-Wide Master Validation)
     cursor.execute("SELECT id, master_key, legal_name FROM users WHERE master_key=?", (master_key,))
     user = cursor.fetchone()
     
     if user:
         user_uuid, db_master_key, db_legal_name = user
         
-        # If a name is provided, we try to verify it
         if name:
-            # 1. Check if it matches the name in the users table
             if db_legal_name and db_legal_name.strip().lower() == name:
                 conn.close()
                 return jsonify({"message": "Master Key Validated"}), 200
             
-            # 2. Check if it matches a name in recovery requests
             cursor.execute("SELECT name_entered FROM recovery_requests WHERE user_id=? ORDER BY timestamp DESC LIMIT 1", (user_uuid,))
             req = cursor.fetchone()
             if req and req[0].strip().lower() == name:
                 conn.close()
                 return jsonify({"message": "Master Key Validated"}), 200
             
-            # 3. If no legal name is set yet, we allow the first name entered to pass
             if not db_legal_name:
                 conn.close()
                 return jsonify({"message": "Master Key Validated (Identity Linked)"}), 200

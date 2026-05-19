@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+import { API_BASE } from '../config';
+
 const ADMIN_TOKEN = 'admin-bypass';
-const API = 'http://127.0.0.1:5000';
+const API = API_BASE;
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
 interface Block {
@@ -58,7 +60,6 @@ export default function BlockchainLedger() {
   let displayBlocks = filteredBlocks;
   if (simulatedBreach && displayBlocks.length > 1) {
       displayBlocks = [...displayBlocks];
-      // Corrupt block #1 (the second block)
       displayBlocks[1] = {
           ...displayBlocks[1],
           block_hash: 'c89a7f6e5d4b3a2109f8e7d6c5b4a392...' // Fake corrupted hash

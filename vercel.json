@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    },
+    {
+      "src": "backend/app.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(register|login|activity-logs|upload|my-files|encrypt-pending|alerts|resolve-alert/.*|security-logs|emergency/.*|download/.*|delete-file/.*|request-recovery|public-ledger|hack-attempt|verify-master-key|change-password|track-click|admin/.*|view-decrypted|grant|shared-with-me|my-shares|revoke)",
+      "dest": "backend/app.py"
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "/assets/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}

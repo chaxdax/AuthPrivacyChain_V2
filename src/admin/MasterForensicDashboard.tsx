@@ -3,12 +3,15 @@ import axios from 'axios';
 import ClickStreamTracker from './ClickStreamTracker';
 import BlockchainLedger from './BlockchainLedger';
 import IPGeofencingMonitor from './IPGeofencingMonitor';
+import UnauthorizedLogs from './UnauthorizedLogs';
+import UserManagement from './UserManagement';
 
 const formatDelhiTime = (utcDateStr: any) => {
   if (!utcDateStr) return '';
   let dateStr = String(utcDateStr);
-  if (!dateStr.includes('T') && !dateStr.includes('Z')) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  if (!dateStr.endsWith('Z') && !dateStr.includes('+') && !dateStr.includes('-')) {
+    dateStr = dateStr.replace(' ', 'T');
+    if (!dateStr.endsWith('Z')) dateStr += 'Z';
   }
   return new Date(dateStr).toLocaleString('en-IN', { 
     timeZone: 'Asia/Kolkata', 
@@ -17,11 +20,12 @@ const formatDelhiTime = (utcDateStr: any) => {
   }).toUpperCase();
 };
 
+import { API_BASE } from '../config';
+
 const ADMIN_TOKEN = 'admin-bypass';
-const API = 'http://127.0.0.1:5000'; // Direct connection to local backend
+const API = API_BASE; // Direct connection to dynamic backend
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
-// --- INTERFACES ---
 interface ForensicStats {
   security_score: number; score_deductions: string[]; blockchain_integrity: string;
   total_users: number; total_files: number; encrypted_files: number;
@@ -33,7 +37,6 @@ interface ForensicStats {
 }
 
 interface RecoveryRequest { request_id: string; user_id: string; phone: string; name_entered: string; name_in_db: string; name_match: boolean; status: string; timestamp: string; }
-  // Unused interfaces removed to fix TS errors
 
 type AdminModule = 'mfd' | 'clickstream' | 'blockchain' | 'ip' | 'alerts' | 'users' | 'recovery';
 
@@ -45,7 +48,10 @@ export default function MasterForensicDashboard() {
   const [activeModule, setActiveModule] = useState<AdminModule>('mfd');
   const [mfdSubView, setMfdSubView] = useState<'activity' | 'score' | 'users' | 'files' | 'alerts' | 'recovery' | 'logins'>('activity');
 
-  // Module States
+  const [resolvingAlertId, setResolvingAlertId] = useState<string | null>(null);
+  const [adminCodeInput, setAdminCodeInput] = useState('');
+  const [showAdminCode, setShowAdminCode] = useState(false);
+
   const [recoveryQueue, setRecoveryQueue] = useState<RecoveryRequest[]>([]);
   const [clickstreamLogs, setClickstreamLogs] = useState<any[]>([]);
   const [blockchainData, setBlockchainData] = useState<any>(null);
@@ -55,15 +61,14 @@ export default function MasterForensicDashboard() {
   const [moduleLoading, setModuleLoading] = useState(false);
   const [telemetryHistory, setTelemetryHistory] = useState<number[]>(Array(100).fill(10));
 
-  // --- FETCHERS ---
   const fetchStats = useCallback(async () => {
     try { const res = await axios.get(`${API}/admin/forensic-stats`, { headers }); setStats(res.data); } 
     catch (err) { console.error('Failed to fetch forensic stats:', err); } 
     finally { setLoading(false); }
   }, []);
 
-  const fetchModuleData = useCallback(async () => {
-    setModuleLoading(true);
+  const fetchModuleData = useCallback(async (showLoading: boolean | any = false) => {
+    if (showLoading === true) setModuleLoading(true);
     try {
       if (activeModule === 'recovery') {
         const res = await axios.get(`${API}/admin/recovery-queue`, { headers }); setRecoveryQueue(res.data);
@@ -79,7 +84,7 @@ export default function MasterForensicDashboard() {
         const res = await axios.get(`${API}/admin/users`, { headers }); setUsersList(res.data);
       }
     } catch { console.error(`Failed to fetch ${activeModule} data`); }
-    finally { setModuleLoading(false); }
+    finally { if (showLoading === true) setModuleLoading(false); }
   }, [activeModule]);
 
   const fetchRecoveryDirect = async () => {
@@ -103,13 +108,12 @@ export default function MasterForensicDashboard() {
 
   useEffect(() => {
     if (activeModule !== 'mfd') {
-      fetchModuleData();
-      const interval = setInterval(fetchModuleData, 3000); // Stable 3s pulse
+      fetchModuleData(true);
+      const interval = setInterval(() => fetchModuleData(false), 3000); // Stable 3s pulse
       return () => clearInterval(interval);
     }
   }, [activeModule, fetchModuleData]);
 
-  // LIVE TELEMETRY GENERATOR
   useEffect(() => {
     const t = setInterval(() => {
       setTelemetryHistory(prev => {
@@ -118,13 +122,11 @@ export default function MasterForensicDashboard() {
         const files = stats?.encrypted_files ?? 0;
         const alerts = stats?.active_alerts ?? 0;
         
-        // Base load calculated from real data
         const baseLoad = (users * 2) + logins + (files * 3);
         const noise = Math.random() * 15 - 7.5;
         
         let newPoint = Math.max(5, Math.min(100, (baseLoad % 80) + 10 + noise));
         
-        // Threat spike
         if (alerts > 0 || stats?.blockchain_integrity !== 'INTACT') {
           newPoint = 80 + Math.random() * 20;
         }
@@ -135,7 +137,6 @@ export default function MasterForensicDashboard() {
     return () => clearInterval(t);
   }, [stats]);
 
-  // --- ACTIONS ---
   const handleScan = async () => {
     setScanning(true); setScanResult(null);
     try { const res = await axios.post(`${API}/admin/system-scan`, {}, { headers }); setScanResult(res.data); fetchStats(); } 
@@ -157,17 +158,26 @@ export default function MasterForensicDashboard() {
     try { await axios.post(`${API}/admin/${action}-recovery/${req_id}`, {}, { headers }); fetchModuleData(); fetchStats(); } catch { console.error('Recovery action failed'); }
   };
 
-  const handleAdminResolve = async (alert_id: string) => {
-    const code = window.prompt("ENTER ADMIN SECURITY CODE TO RESOLVE ALERT:");
-    if (code !== "admin123") { alert("INVALID CODE. ACCESS DENIED."); return; }
-    try { await axios.post(`${API}/admin/resolve-alert/${alert_id}`, {}, { headers }); fetchStats(); if (activeModule === 'alerts') fetchModuleData(); } catch { alert("Failed to resolve."); }
+  const handleAdminResolve = (alert_id: string) => {
+    setResolvingAlertId(alert_id);
+    setAdminCodeInput('');
+    setShowAdminCode(false);
   };
 
-  const handleUserAction = async (user_id: string, action: 'suspend' | 'reset') => {
-    const endpoint = action === 'suspend' ? 'suspend-user' : 'reset-token';
-    const msg = action === 'suspend' ? 'SUSPEND this user?' : 'FORCE RESET this users token?';
-    if (!window.confirm(`⚠️ ${msg}`)) return;
-    try { await axios.post(`${API}/admin/${endpoint}/${user_id}`, {}, { headers }); alert('Success'); fetchModuleData(); } catch { alert('Action failed.'); }
+  const submitAdminResolve = async () => {
+    if (adminCodeInput !== "admin123") { 
+      alert("INVALID CODE. ACCESS DENIED."); 
+      setResolvingAlertId(null); 
+      return; 
+    }
+    try { 
+      await axios.post(`${API}/admin/resolve-alert/${resolvingAlertId}`, {}, { headers }); 
+      fetchStats(); 
+      if (activeModule === 'alerts') fetchModuleData(); 
+    } catch { 
+      alert("Failed to resolve."); 
+    }
+    setResolvingAlertId(null);
   };
 
   if (loading) {
@@ -186,7 +196,6 @@ export default function MasterForensicDashboard() {
 
   return (
     <div className="soc-app">
-      {/* HEADER */}
       <header className="soc-header">
         <div className="soc-header-left">
           <img src="/logo.png" alt="Logo" className="soc-logo-img" onError={(e) => { e.currentTarget.src = ''; e.currentTarget.className = 'soc-logo fallback-logo'; }} />
@@ -207,7 +216,6 @@ export default function MasterForensicDashboard() {
         </div>
       </header>
 
-      {/* MODULES ROW (UPSIDE BOXES - TABS) */}
       <div className="soc-modules-grid">
         <div className={`soc-tab ${activeModule === 'mfd' ? 'active' : ''}`} onClick={() => setActiveModule('mfd')}>
           <span className="box-icon">🛡️</span> <span className="box-name">Master Forensic Dashboard</span>
@@ -229,7 +237,6 @@ export default function MasterForensicDashboard() {
         </div>
       </div>
 
-      {/* GLOBAL ACTIONS BAR (Between Modules and Main Content) */}
       <div className="soc-global-actions">
         <button className="soc-pill-btn" onClick={handleScan} disabled={scanning}>{scanning ? '⟳ Scanning Network...' : '⚡ Global Scan'}</button>
         {stats?.system_lockdown ? (
@@ -239,7 +246,6 @@ export default function MasterForensicDashboard() {
         )}
       </div>
 
-      {/* MAIN CONTENT AREA */}
       <div className="soc-main-body">
         {scanResult && (
           <div className={`soc-scan-banner ${scanResult.status === 'ERROR' ? 'err' : ''}`}>
@@ -251,10 +257,8 @@ export default function MasterForensicDashboard() {
           </div>
         )}
 
-        {/* 1. MASTER FORENSIC DASHBOARD */}
         {activeModule === 'mfd' && (
           <div className="mfd-classic">
-            {/* 7 Big Stat Cards (Classic MFD) */}
             <div className="classic-stats-grid">
               <div className={`stat-card ${mfdSubView === 'score' ? 'active-stat' : ''}`} onClick={() => setMfdSubView('score')}>
                 <div className="sc-icon-row"><span className="sc-icon" style={{background: 'rgba(16,185,129,0.1)', color: '#10b981'}}>🎯</span><span className="sc-title">SECURITY SCORE</span></div>
@@ -315,7 +319,6 @@ export default function MasterForensicDashboard() {
               </div>
             </div>
 
-            {/* Bottom 2 Panels */}
             <div className="classic-panels-grid">
               <div className="soc-full-card" style={{minHeight: '400px'}}>
                 <div className="card-header" style={{paddingBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
@@ -331,7 +334,6 @@ export default function MasterForensicDashboard() {
                    <button onClick={() => { fetchStats(); if (mfdSubView === 'recovery') fetchRecoveryDirect(); }} className="soc-pill-btn">↻ Refresh</button>
                 </div>
                 <div className="soc-list" style={{paddingTop: '16px'}}>
-                  {/* ACTIVITY VIEW */}
                   {mfdSubView === 'activity' && (
                     <>
                       <div className="list-head" style={{display:'flex', gap:'10px', padding:'0 12px 10px'}}>
@@ -351,7 +353,6 @@ export default function MasterForensicDashboard() {
                     </>
                   )}
 
-                  {/* SCORE DEDUCTIONS VIEW */}
                   {mfdSubView === 'score' && (
                     (stats?.score_deductions?.length ?? 0) === 0 ? <div className="empty-state"><div style={{fontSize:'32px', marginBottom:'10px'}}>✅</div><p>Score is perfect 100/100. No deductions!</p></div> : stats?.score_deductions.map((ded, i) => (
                       <div key={i} className="threat-card" style={{borderColor:'#ef4444'}}>
@@ -360,7 +361,6 @@ export default function MasterForensicDashboard() {
                     ))
                   )}
 
-                  {/* USERS VIEW */}
                   {mfdSubView === 'users' && (
                     <>
                       <div className="list-head" style={{display:'flex', gap:'10px', padding:'0 12px 10px'}}>
@@ -378,7 +378,6 @@ export default function MasterForensicDashboard() {
                     </>
                   )}
 
-                  {/* FILES VIEW */}
                   {mfdSubView === 'files' && (
                     <>
                       <div className="list-head" style={{display:'flex', gap:'10px', padding:'0 12px 10px'}}>
@@ -394,7 +393,6 @@ export default function MasterForensicDashboard() {
                     </>
                   )}
 
-                  {/* ALERTS VIEW */}
                   {mfdSubView === 'alerts' && (
                     (stats?.live_threats?.length ?? 0) === 0 ? <p className="empty-state">No active alerts.</p> : stats?.live_threats.map((t, i) => (
                       <div key={i} className="threat-card">
@@ -411,7 +409,6 @@ export default function MasterForensicDashboard() {
                     ))
                   )}
 
-                  {/* RECOVERY VIEW */}
                   {mfdSubView === 'recovery' && (
                     recoveryQueue.length === 0 ? <p className="empty-state">No pending recovery requests.</p> : recoveryQueue.map(r => (
                       <div key={r.request_id} className="threat-card">
@@ -427,7 +424,6 @@ export default function MasterForensicDashboard() {
                     ))
                   )}
 
-                  {/* LOGINS VIEW */}
                   {mfdSubView === 'logins' && (
                     <>
                       <div className="list-head" style={{display:'flex', gap:'10px', padding:'0 12px 10px'}}>
@@ -475,7 +471,6 @@ export default function MasterForensicDashboard() {
               </div>
             </div>
 
-            {/* CYBERSECURITY TOPOLOGY VISUALIZATION (RADAR GLOBE) */}
             <div className="soc-full-card" style={{marginTop: '24px', padding: '0', minHeight: '220px', flex: 'none', position: 'relative', overflow: 'hidden'}}>
               <div className="card-header" style={{padding: '20px 24px 16px', position: 'relative', zIndex: 10}}>
                  <h3 style={{color: (stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8', textShadow: `0 0 5px ${(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.5)' : 'rgba(129,140,248,0.5)'}`}}>Global Threat Matrix & Cloud Security</h3> 
@@ -483,14 +478,12 @@ export default function MasterForensicDashboard() {
               </div>
               
               <div className="cyber-vis-container" style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: '#131220', opacity: 1}}>
-                 {/* Binary Background */}
                  <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, color: (stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)', fontSize: '12px', fontFamily: 'monospace', overflow: 'hidden', whiteSpace: 'pre', lineHeight: '12px', zIndex: 0}}>
                    {Array.from({length: 20}).map((_, i) => (
                      <div key={i} style={{opacity: Math.random() * 0.5 + 0.1}}>{Array.from({length: 200}).map(() => Math.random() > 0.5 ? '1' : '0').join(' ')}</div>
                    ))}
                  </div>
 
-                 {/* Foreground SVG Map */}
                  <svg viewBox="0 0 1000 220" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" style={{position: 'relative', zIndex: 1}}>
                     <defs>
                       <filter id="neon-glow-intense">
@@ -509,12 +502,10 @@ export default function MasterForensicDashboard() {
                       </filter>
                     </defs>
 
-                    {/* Data Overlays */}
                     <text x="150" y="40" fill="#6366f1" fontSize="10" fontWeight="bold">USERS: {stats?.total_users ?? 0}</text>
                     <text x="850" y="40" fill="#6366f1" fontSize="10" fontWeight="bold">LOGINS: {stats?.total_logins ?? 0}</text>
                     <text x="500" y="25" fill="#818cf8" fontSize="10" fontWeight="bold" textAnchor="middle">FILES SECURED: {stats?.encrypted_files ?? 0}</text>
 
-                    {/* PCB TRACES (Left Side) */}
                     <g className="pcb-traces" stroke={(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'} strokeWidth="3" fill="none" strokeLinecap="square">
                        <path d="M -50,50 L 200,50 L 250,110 L 410,110" />
                        <path d="M -50,150 L 150,150 L 200,110" />
@@ -526,7 +517,6 @@ export default function MasterForensicDashboard() {
                        <circle cx="300" cy="20" r="4" fill={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} filter="url(#neon-glow)" />
                     </g>
                     
-                    {/* Glowing Packets (Left Side - Speed depends on Total Users) */}
                     <g stroke={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} strokeWidth="3" fill="none" filter="url(#neon-glow-intense)">
                        <path d="M -50,50 L 200,50 L 250,110 L 410,110" strokeDasharray="20 600" style={{animation: `flow-dash ${Math.max(0.5, 3 - ((stats?.total_users ?? 0) * 0.1))}s linear infinite`}} />
                        <path d="M -50,150 L 150,150 L 200,110" strokeDasharray="20 500" style={{animation: `flow-dash ${Math.max(0.6, 4 - ((stats?.total_users ?? 0) * 0.1))}s linear infinite 0.5s`}} />
@@ -534,7 +524,6 @@ export default function MasterForensicDashboard() {
                        <path d="M -50,20 L 300,20 L 350,90 L 410,90" strokeDasharray="20 500" style={{animation: `flow-dash ${Math.max(0.8, 3.5 - ((stats?.total_users ?? 0) * 0.1))}s linear infinite 1s`}} />
                     </g>
 
-                    {/* PCB TRACES (Right Side) */}
                     <g className="pcb-traces" stroke={(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'} strokeWidth="3" fill="none" strokeLinecap="square">
                        <path d="M 1050,50 L 800,50 L 750,110 L 590,110" />
                        <path d="M 1050,150 L 850,150 L 800,110" />
@@ -546,7 +535,6 @@ export default function MasterForensicDashboard() {
                        <circle cx="700" cy="20" r="4" fill={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} filter="url(#neon-glow)" />
                     </g>
 
-                    {/* Glowing Packets (Right Side - Speed depends on Total Logins) */}
                     <g stroke={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} strokeWidth="3" fill="none" filter="url(#neon-glow-intense)">
                        <path d="M 1050,50 L 800,50 L 750,110 L 590,110" strokeDasharray="20 600" style={{animation: `flow-dash ${Math.max(0.5, 3 - ((stats?.total_logins ?? 0) * 0.05))}s linear infinite`}} />
                        <path d="M 1050,150 L 850,150 L 800,110" strokeDasharray="20 500" style={{animation: `flow-dash ${Math.max(0.6, 4 - ((stats?.total_logins ?? 0) * 0.05))}s linear infinite 0.5s`}} />
@@ -554,16 +542,12 @@ export default function MasterForensicDashboard() {
                        <path d="M 1050,20 L 700,20 L 650,90 L 590,90" strokeDasharray="20 500" style={{animation: `flow-dash ${Math.max(0.8, 3.5 - ((stats?.total_logins ?? 0) * 0.05))}s linear infinite 1s`}} />
                     </g>
 
-                    {/* THE CENTER GLOBE / RADAR */}
                     <g transform="translate(500, 110)">
-                       {/* Speed depends on files and recovery queue */}
                        <circle cx="0" cy="0" r="95" fill="none" stroke={(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'} strokeWidth="6" strokeDasharray="20 10" style={{transformOrigin: '0px 0px', animation: `spin ${Math.max(2, 20 - ((stats?.encrypted_files ?? 0) * 0.5))}s linear infinite`}} />
                        <circle cx="0" cy="0" r="85" fill="none" stroke={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} strokeWidth="4" filter="url(#neon-glow-intense)" style={{transformOrigin: '0px 0px', animation: `spin-rev ${Math.max(3, 25 - ((stats?.encrypted_files ?? 0) * 0.5))}s linear infinite`}} />
                        
-                       {/* Solid Globe Base */}
                        <circle cx="0" cy="0" r="75" fill={(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(99,102,241,0.15)'} stroke={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} strokeWidth="3" filter="url(#neon-glow)" />
                        
-                       {/* Globe Grid Lines */}
                        <g stroke={(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.6)' : 'rgba(99,102,241,0.6)'} strokeWidth="2" fill="none">
                          <ellipse cx="0" cy="0" rx="35" ry="75" />
                          <ellipse cx="0" cy="0" rx="15" ry="75" />
@@ -571,15 +555,12 @@ export default function MasterForensicDashboard() {
                          <ellipse cx="0" cy="0" rx="75" ry="45" />
                        </g>
                        
-                       {/* Radar Sweep element - Speed depends on recovery requests / alerts */}
                        <path d="M 0,0 L 0,-75 A 75,75 0 0,1 75,0 Z" fill={(stats?.active_alerts ?? 0) > 0 ? 'rgba(239,68,68,0.4)' : 'rgba(99,102,241,0.4)'} style={{transformOrigin: '0px 0px', animation: `spin ${((stats?.active_alerts ?? 0) > 0) ? 1 : Math.max(1.5, 4 - ((stats?.pending_recovery_requests ?? 0) * 0.5))}s linear infinite`}} />
                        
-                       {/* Status Overlay */}
                        <circle cx="0" cy="0" r="15" fill="#131220" stroke={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} strokeWidth="2" filter="url(#neon-glow)" />
                        <text x="0" y="4" fill={(stats?.active_alerts ?? 0) > 0 ? '#ef4444' : '#818cf8'} fontSize="12" textAnchor="middle" fontWeight="800">{(stats?.active_alerts ?? 0) > 0 ? '⚠️' : 'SYS'}</text>
                     </g>
 
-                    {/* LIVE TELEMETRY WAVEFORM */}
                     <polyline 
                        points={telemetryHistory.map((val, i) => `${i * 10},${220 - (val * 1.5)}`).join(' ')} 
                        fill="none" 
@@ -594,66 +575,38 @@ export default function MasterForensicDashboard() {
           </div>
         )}
 
-        {/* 2. CLICK-STREAM */}
         {activeModule === 'clickstream' && (
           <ClickStreamTracker />
         )}
 
-        {/* 3. BLOCKCHAIN */}
         {activeModule === 'blockchain' && (
           <BlockchainLedger />
         )}
 
-        {/* 4. IP GEOFENCING */}
         {activeModule === 'ip' && (
           <IPGeofencingMonitor />
         )}
 
-        {/* 5. ALERTS */}
         {activeModule === 'alerts' && (
-          <div className="soc-full-card">
-            <div className="card-header"><h3>Unauthorized Access Logs <span className="count-badge">{unauthLogs.length} total</span></h3> <button onClick={fetchModuleData} className="soc-pill-btn">↻</button></div>
-            <div className="soc-list">
-              <div className="list-head" style={{gridTemplateColumns: '1fr 1.5fr 1.5fr 0.5fr 1fr'}}><span>IP</span><span>Message</span><span>Time</span><span>Status</span><span>Action</span></div>
-              {moduleLoading ? <p className="empty-state">Loading alerts...</p> : unauthLogs.length === 0 ? <p className="empty-state">No logs.</p> : unauthLogs.map((a, i) => (
-                <div key={i} className="list-row" style={{gridTemplateColumns: '1fr 1.5fr 1.5fr 0.5fr 1fr'}}>
-                  <span className="l-id">{a.ip}</span>
-                  <span className="l-target" style={{fontSize: '10px'}}>{a.message}</span>
-                  <span className="l-time">{formatDelhiTime(a.timestamp)}</span>
-                  <span className={a.resolved ? 'c-green' : 'c-red'}>{a.resolved ? 'Resolved' : 'Active'}</span>
-                  <span>
-                    {!a.resolved && <button onClick={() => handleAdminResolve(a.id)} className="t-resolve" style={{margin:0}}>✓ Resolve</button>}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <UnauthorizedLogs 
+            unauthLogs={unauthLogs} 
+            moduleLoading={moduleLoading} 
+            formatDelhiTime={formatDelhiTime} 
+            fetchModuleData={() => fetchModuleData(true)} 
+            handleAdminResolve={handleAdminResolve} 
+          />
         )}
 
-        {/* 6. USERS */}
         {activeModule === 'users' && (
-          <div className="soc-full-card">
-            <div className="card-header"><h3>User Management <span className="count-badge">{usersList.length} users</span></h3> <button onClick={fetchModuleData} className="soc-pill-btn">↻</button></div>
-            <div className="soc-list">
-              <div className="list-head" style={{gridTemplateColumns: '1fr 1fr 1fr 0.5fr 0.5fr 1fr'}}><span>ID</span><span>Name</span><span>Phone</span><span>Files</span><span>Alerts</span><span>Actions</span></div>
-              {moduleLoading ? <p className="empty-state">Loading users...</p> : usersList.length === 0 ? <p className="empty-state">No users.</p> : usersList.map((u, i) => (
-                <div key={i} className="list-row" style={{gridTemplateColumns: '1fr 1fr 1fr 0.5fr 0.5fr 1fr'}}>
-                  <span className="l-id">{u.numeric_id}</span>
-                  <span>{u.name}</span>
-                  <span className="l-target">{u.phone}</span>
-                  <span className="l-user">{u.files}</span>
-                  <span className={u.alerts > 0 ? 'c-red' : 'c-green'}>{u.alerts}</span>
-                  <div style={{display:'flex', gap:'6px'}}>
-                    <button onClick={() => handleUserAction(u.id, 'suspend')} className="t-resolve" style={{borderColor:'#ef4444', color:'#ef4444', margin:0}}>Suspend</button>
-                    <button onClick={() => handleUserAction(u.id, 'reset')} className="t-resolve" style={{borderColor:'#a78bfa', color:'#a78bfa', margin:0}}>Reset Token</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <UserManagement 
+            usersList={usersList} 
+            moduleLoading={moduleLoading} 
+            fetchModuleData={() => fetchModuleData(true)} 
+            API={API} 
+            headers={headers} 
+          />
         )}
 
-        {/* 7. RECOVERY */}
         {activeModule === 'recovery' && (
           <div className="soc-full-card">
             <div className="card-header"><h3>Emergency Recovery Control <span className="count-badge">{recoveryQueue.length} requests</span></h3> <button onClick={fetchModuleData} className="soc-pill-btn">↻</button></div>
@@ -676,11 +629,39 @@ export default function MasterForensicDashboard() {
         )}
       </div>
 
+      {resolvingAlertId && (
+        <div className="soc-modal-overlay" style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999}}>
+          <div className="soc-modal-content" style={{background: '#131220', border: '1px solid rgba(99,102,241,0.3)', padding: '24px', borderRadius: '16px', width: '350px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)'}}>
+            <h3 style={{marginTop: 0, marginBottom: '16px', color: '#fff', fontSize: '14px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px'}}>ENTER ADMIN SECURITY CODE TO RESOLVE ALERT:</h3>
+            <div style={{position: 'relative', marginBottom: '20px'}}>
+              <input 
+                type={showAdminCode ? "text" : "password"} 
+                value={adminCodeInput} 
+                onChange={(e) => setAdminCodeInput(e.target.value)}
+                placeholder="Security Code..."
+                style={{width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', boxSizing: 'border-box', outline: 'none', fontFamily: showAdminCode ? 'inherit' : 'caption'}}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') submitAdminResolve(); }}
+              />
+              <button 
+                onClick={() => setShowAdminCode(!showAdminCode)}
+                style={{position: 'absolute', right: '12px', top: '12px', background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: 0, fontSize: '16px'}}
+                title={showAdminCode ? "Hide Password" : "Show Password"}
+              >
+                {showAdminCode ? '👁️' : '👁️‍🗨️'}
+              </button>
+            </div>
+            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+              <button onClick={() => setResolvingAlertId(null)} className="soc-pill-btn danger" style={{margin: 0}}>Cancel</button>
+              <button onClick={submitAdminResolve} className="soc-pill-btn" style={{margin: 0, background: 'rgba(99,102,241,0.2)', borderColor: '#6366f1', color: '#fff'}}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
-        /* GLOBAL SOC APP STYLES */
         .soc-app { background: #0b0a15; min-height: 100vh; width: 100%; color: #fff; font-family: 'Inter', sans-serif; display: flex; flex-direction: column; padding: 24px; box-sizing: border-box; overflow-y: auto; }
         
-        /* HEADER */
         .soc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
         .soc-header-left { display: flex; align-items: center; gap: 16px; }
         .soc-logo { font-size: 32px; background: rgba(99, 102, 241, 0.2); width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; }
@@ -705,7 +686,6 @@ export default function MasterForensicDashboard() {
         .soc-logout-btn { display: flex; align-items: center; gap: 8px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); color: #818cf8; padding: 8px 20px; border-radius: 20px; font-size: 12px; font-weight: 700; cursor: pointer; transition: 0.2s; }
         .soc-logout-btn:hover { background: #6366f1; color: #fff; }
         
-        /* UPSIDE BOXES (MODULES) - TABS */
         .soc-modules-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 30px; }
         .soc-tab { display: flex; align-items: center; justify-content: center; gap: 10px; background: #131220; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 20px; cursor: pointer; transition: 0.3s; flex: 1; text-align: center; min-width: max-content; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
         .soc-tab:hover { background: rgba(255,255,255,0.05); border-color: rgba(99,102,241,0.3); transform: translateY(-2px); }
@@ -714,11 +694,9 @@ export default function MasterForensicDashboard() {
         .box-name { font-size: 13px; font-weight: 700; color: #9ca3af; transition: 0.3s; }
         .soc-tab.active .box-name { color: #fff; }
 
-        /* MAIN BODY */
         .soc-main-body { display: flex; flex-direction: column; gap: 24px; flex: 1; }
         .count-badge { font-size: 10px; padding: 3px 8px; border-radius: 8px; background: rgba(255,255,255,0.1); color: #ccc; margin-left: 10px; vertical-align: middle; }
         
-        /* CLASSIC MFD STYLES */
         .classic-stats-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 16px; margin-bottom: 24px; }
         .stat-card { background: #131220; border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); cursor: pointer; transition: 0.2s; }
         .stat-card:hover { border-color: rgba(99,102,241,0.3); transform: translateY(-2px); }
@@ -730,13 +708,11 @@ export default function MasterForensicDashboard() {
         .sc-title { font-size: 11px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
         .sc-subtext { font-size: 10px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 
-        /* LIST HEADERS */
         .list-head { font-size: 10px; font-weight: 700; color: #8b5cf6; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 8px; }
         .list-head span { opacity: 0.8; }
         
         .classic-panels-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 24px; }
 
-        /* CIRCULAR SCORE CSS */
         .score-circle { width: 50px; height: 50px; }
         .circular-chart { display: block; margin: 0 auto; max-width: 100%; max-height: 250px; }
         .circle-bg { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 3.8; }
@@ -745,7 +721,6 @@ export default function MasterForensicDashboard() {
         .circular-chart.green .circle { stroke: #10b981; }
         .percentage { fill: #fff; font-family: sans-serif; font-size: 10px; font-weight: 800; text-anchor: middle; }
 
-        /* CYBERSECURITY TOPOLOGY CSS */
         .cyber-flow-left path { animation: flow-dash 3s linear infinite; }
         .cyber-flow-left.fast path { animation-duration: 1.5s; }
         .cyber-flow-left path:nth-child(2) { animation-duration: 4s; animation-delay: 1s; }
@@ -764,7 +739,6 @@ export default function MasterForensicDashboard() {
         @keyframes spin { 100% { transform: rotate(360deg); } }
         @keyframes spin-rev { 100% { transform: rotate(-360deg); } }
         
-        /* MFD SPECIFIC */
         .mfd-grid { display: grid; grid-template-columns: 1fr 400px; gap: 24px; }
         .mfd-radar-card { background: #131220; border: 1px solid rgba(255,255,255,0.05); border-radius: 20px; padding: 24px; display: flex; flex-direction: column; }
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
@@ -774,7 +748,6 @@ export default function MasterForensicDashboard() {
         .dot.uncov { background: #374151; }
         .dot.cov { background: #6366f1; box-shadow: 0 0 10px #6366f1; }
         
-        /* RADAR CSS (FROM IMAGE) */
         .radar-visual { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; }
         .radar-circle-bg { width: 300px; height: 300px; position: relative; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
         .r-ring { position: absolute; border: 1px dashed rgba(99,102,241,0.2); border-radius: 50%; }
@@ -802,7 +775,6 @@ export default function MasterForensicDashboard() {
         .r-label.l-bottom { bottom: -30px; left: 100px; }
         .r-label.l-left { left: -110px; top: 140px; text-align: right; }
 
-        /* SIDE COLUMN */
         .mfd-side-column { display: flex; flex-direction: column; gap: 24px; }
         .risk-card, .customers-card { background: #131220; border: 1px solid rgba(255,255,255,0.05); border-radius: 20px; padding: 24px; }
         .risk-total { font-size: 18px; font-weight: 700; color: #fff; }
@@ -815,7 +787,6 @@ export default function MasterForensicDashboard() {
         .pr-fill.high { background: linear-gradient(90deg, #b45309, #f59e0b); box-shadow: 0 0 10px rgba(245,158,11,0.5); }
         .pr-fill.med { background: linear-gradient(90deg, #854d0e, #eab308); }
 
-        /* LISTS */
         .soc-full-card { background: #131220; border: 1px solid rgba(255,255,255,0.05); border-radius: 20px; padding: 24px; flex: 1; }
         .soc-list { display: flex; flex-direction: column; gap: 8px; max-height: 800px; overflow-y: auto; padding-right: 10px; }
         .soc-list::-webkit-scrollbar { width: 4px; }

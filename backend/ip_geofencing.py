@@ -5,10 +5,8 @@ import os
 import time
 from functools import lru_cache
 
-# Database Path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'auth_chain.db')
 
-# In-memory cache for resolved IPs (IP -> {country, allowed, timestamp})
 GEO_CACHE = {}
 CACHE_TTL = 300 # Cache results for 5 minutes
 
@@ -22,7 +20,7 @@ def get_public_ip():
     ]
     for url in services:
         try:
-            ip = requests.get(url, timeout=2).text.strip()
+            ip = requests.get(url, timeout=1.5).text.strip()
             if ip and len(ip.split('.')) == 4:
                 return ip
         except:
@@ -31,39 +29,71 @@ def get_public_ip():
     return "127.0.0.1"
 
 def get_geo_data(ip_address):
-    """Hits the GeoIP API with localized caching."""
+    """Hits the GeoIP API with multi-tiered fallback caching and 2s VPN response time."""
     now = time.time()
     
-    # Skip cache for localhost to allow for VPN testing/switching
-    if ip_address not in ['127.0.0.1', 'localhost', '::1']:
-        if ip_address in GEO_CACHE:
-            cache_entry = GEO_CACHE[ip_address]
-            if now - cache_entry['timestamp'] < CACHE_TTL:
-                return cache_entry['allowed'], cache_entry['country'], ip_address
-
     target_ip = ip_address
     if ip_address in ['127.0.0.1', 'localhost', '::1']:
-        target_ip = get_public_ip()
-        print(f">> GEOFENCE: Resolved Localhost to Public IP: {target_ip}")
+        local_res_key = f"local_res_{ip_address}"
+        if local_res_key in GEO_CACHE and (now - GEO_CACHE[local_res_key]['timestamp'] < 2):
+            target_ip = GEO_CACHE[local_res_key]['ip']
+        else:
+            target_ip = get_public_ip()
+            GEO_CACHE[local_res_key] = {'ip': target_ip, 'timestamp': now}
     
+    if target_ip in GEO_CACHE:
+        cache_entry = GEO_CACHE[target_ip]
+        if now - cache_entry['timestamp'] < CACHE_TTL:
+            return cache_entry['allowed'], cache_entry['country'], target_ip
+
+    # Tier 1: ip-api.com
     try:
-        res = requests.get(f'http://ip-api.com/json/{target_ip}', timeout=2)
+        res = requests.get(f'http://ip-api.com/json/{target_ip}', timeout=1.5)
         data = res.json()
         if data.get('status') == 'success':
             country_code = data.get('countryCode')
             allowed = (country_code == 'IN')
-            print(f">> GEOFENCE: API Result for {target_ip}: {country_code} (Allowed: {allowed})")
-            
-            # Update Cache
-            GEO_CACHE[ip_address] = {
+            GEO_CACHE[target_ip] = {
                 'country': country_code,
                 'allowed': allowed,
                 'timestamp': now
             }
             return allowed, country_code, target_ip
     except Exception as e:
-        print(f">> GEOFENCE API ERROR: {e}")
-    
+        print(f">> GEOFENCE TIER 1 API ERROR: {e}")
+
+    # Tier 2: freeipapi.com
+    try:
+        res = requests.get(f'https://freeipapi.com/api/json/{target_ip}', timeout=1.5)
+        data = res.json()
+        country_code = data.get('countryCode')
+        if country_code:
+            allowed = (country_code == 'IN')
+            GEO_CACHE[target_ip] = {
+                'country': country_code,
+                'allowed': allowed,
+                'timestamp': now
+            }
+            return allowed, country_code, target_ip
+    except Exception as e:
+        print(f">> GEOFENCE TIER 2 API ERROR: {e}")
+
+    # Tier 3: ipapi.co
+    try:
+        res = requests.get(f'https://ipapi.co/{target_ip}/json/', headers={'User-Agent': 'Mozilla/5.0'}, timeout=1.5)
+        data = res.json()
+        country_code = data.get('country')
+        if country_code:
+            allowed = (country_code == 'IN')
+            GEO_CACHE[target_ip] = {
+                'country': country_code,
+                'allowed': allowed,
+                'timestamp': now
+            }
+            return allowed, country_code, target_ip
+    except Exception as e:
+        print(f">> GEOFENCE TIER 3 API ERROR: {e}")
+
     return True, 'IN', target_ip
 
 def enforce_geofence(ip_address, user_id='ANONYMOUS', action_type='ACCESS'):

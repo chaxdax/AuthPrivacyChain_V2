@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import PermissionManager from './PermissionManager';
+import { API_BASE } from './config';
 
-// Imports directly from src
 import AlertCenter from './alert'; 
 import EmergencyRoom from './Emergency'; 
 import SecurityFeed from './SecurityActivityFeed';
 
 interface UserDashboardProps {
   activeTab: string;
+  [key: string]: any;
 }
 
 const UserDashboard = ({ activeTab }: UserDashboardProps) => {
@@ -26,20 +27,14 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     const token = localStorage.getItem('apc_token');
     const myUsername = localStorage.getItem('apc_user'); 
     try {
-      const resMy = await axios.get('http://127.0.0.1:5000/my-files', { 
-        headers: { 'x-access-token': token } 
-      });
-      const myFiles = resMy.data.map((f: any) => ({ ...f, is_shared: false }));
+      const [resMy, resShared] = await Promise.all([
+        axios.get(`${API_BASE}/my-files`, { headers: { 'x-access-token': token } }),
+        axios.get(`${API_BASE}/shared-with-me`, { headers: { 'x-user-identity': myUsername } }).catch(() => ({ data: [] }))
+      ]);
 
-      let sharedFiles: any[] = [];
-      try {
-        const resShared = await axios.get('http://127.0.0.1:5000/shared-with-me', { 
-          headers: { 'x-user-identity': myUsername } 
-        });
-        sharedFiles = resShared.data.map((f: any) => ({ ...f, is_shared: true }));
-      } catch (e) {
-        console.warn("Shared files route not reachable.");
-      }
+      const myFiles = resMy.data.map((f: any) => ({ ...f, is_shared: false }));
+      const sharedFiles = resShared.data.map((f: any) => ({ ...f, is_shared: true }));
+      
       setFiles([...myFiles, ...sharedFiles]);
     } catch (err) { 
       console.error("Vault offline"); 
@@ -53,10 +48,20 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     formData.append('file', selectedFile);
     const token = localStorage.getItem('apc_token');
     try {
-      await axios.post('http://127.0.0.1:5000/upload', formData, {
+      await axios.post(`${API_BASE}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'x-access-token': token }
       });
       setSelectedFile(null);
+      
+      // Auto-trigger encryption immediately after upload for super-fast securing of files
+      try {
+        await axios.post(`${API_BASE}/encrypt-pending`, {}, { 
+          headers: { 'x-access-token': token } 
+        });
+      } catch (encErr) {
+        console.warn("Auto-encryption pending manual trigger.");
+      }
+      
       fetchFiles();
     } catch (err) { alert("Upload failed."); } finally { setIsProcessing(false); }
   };
@@ -65,7 +70,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     const token = localStorage.getItem('apc_token');
     setIsProcessing(true);
     try {
-      await axios.post(`http://127.0.0.1:5000/encrypt-pending`, {}, { 
+      await axios.post(`${API_BASE}/encrypt-pending`, {}, { 
         headers: { 'x-access-token': token } 
       });
       fetchFiles();
@@ -74,7 +79,7 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
 
   const handleDecrypt = async (file: any) => {
     try {
-      const res = await axios.get(`http://127.0.0.1:5000/download/${file.id}`, {
+      const res = await axios.get(`${API_BASE}/download/${file.id}`, {
         headers: { 'x-access-token': localStorage.getItem('apc_token') },
         responseType: 'blob' 
       });
@@ -86,10 +91,9 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
       link.click();
       link.remove();
 
-      // --- SOC BACKEND TRIGGER ADDED HERE ---
       try {
         const myUsername = localStorage.getItem('apc_user') || "User_2";
-        await axios.post('http://127.0.0.1:5000/api/log-decrypt', {
+        await axios.post(`${API_BASE}/api/log-decrypt`, {
           user: myUsername,
           owner: file.owner || "User_1", 
           file: file.filename
@@ -97,7 +101,6 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
       } catch (logErr) {
         console.warn("SOC activity recording failed.");
       }
-      // ---------------------------------------
 
     } catch (err) { alert("Decryption failed."); }
   };
@@ -106,14 +109,13 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
     if (!window.confirm("Delete file permanently?")) return;
     const token = localStorage.getItem('apc_token');
     try {
-      await axios.delete(`http://127.0.0.1:5000/delete-file/${id}`, { 
+      await axios.delete(`${API_BASE}/delete-file/${id}`, { 
         headers: { 'x-access-token': token } 
       });
       fetchFiles();
     } catch (err) { alert("Delete failed."); }
   };
 
-  // --- ROUTING LOGIC ---
   let content;
   
   if (current.includes('vault')) {

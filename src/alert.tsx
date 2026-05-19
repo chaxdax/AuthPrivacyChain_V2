@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE } from './config';
 
 const AlertCenter = () => {
   const [alerts, setAlerts] = useState<any[]>([]);
@@ -8,7 +9,7 @@ const AlertCenter = () => {
   const fetchAlerts = async () => {
     try {
       const token = localStorage.getItem('apc_token');
-      const res = await axios.get('http://127.0.0.1:5000/alerts', {
+      const res = await axios.get(`${API_BASE}/alerts`, {
         headers: { 'x-access-token': token }
       });
       setAlerts(res.data);
@@ -28,7 +29,7 @@ const AlertCenter = () => {
   const handleResolve = async (alertId: string) => {
     try {
       const token = localStorage.getItem('apc_token');
-      await axios.post(`http://127.0.0.1:5000/resolve-alert/${alertId}`, {}, {
+      await axios.post(`${API_BASE}/resolve-alert/${alertId}`, {}, {
         headers: { 'x-access-token': token }
       });
       fetchAlerts();
@@ -39,7 +40,6 @@ const AlertCenter = () => {
 
   return (
     <div className="module-inner-content">
-      {/* HEADER SECTION - FIXED ALIGNMENT */}
       <div className="vault-header-control" style={{marginBottom: '20px'}}>
         <div className="header-status-block">
           <div className="pulse-indicator"></div>
@@ -49,7 +49,6 @@ const AlertCenter = () => {
       </div>
 
       <div style={{flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
-        {/* HEADER LABELS - ALIGNED TO ROWS */}
         <div className="v-table-head alert-grid">
           <span className="col-label">SEVERITY</span>
           <span className="col-label">TIMESTAMP</span>
@@ -150,7 +149,6 @@ const AlertCenter = () => {
           font-family: monospace; 
         }
 
-        /* ONE-LINE GRID SYSTEM */
         .alert-grid {
           display: grid !important;
           grid-template-columns: 120px 180px 1fr 150px 120px !important;
@@ -186,7 +184,6 @@ const AlertCenter = () => {
           font-size: 11px;
         }
 
-        /* TEXT COLORS & FORMAL STYLING */
         .severity-tag { font-size: 9px; font-weight: 900; padding: 2px 8px; border-radius: 4px; border: 1px solid; width: fit-content; }
         .high { border-color: #ef4444; color: #ef4444; }
         .medium { border-color: #f59e0b; color: #f59e0b; }

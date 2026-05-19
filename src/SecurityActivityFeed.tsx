@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE } from './config';
 
 const SecurityFeed = () => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -9,7 +10,7 @@ const SecurityFeed = () => {
     try {
       const token = localStorage.getItem('apc_token');
       
-      const res = await axios.get(`http://127.0.0.1:5000/security-logs`, {
+      const res = await axios.get(`${API_BASE}/security-logs`, {
         headers: { 'x-access-token': token }
       });
       
@@ -38,7 +39,6 @@ const SecurityFeed = () => {
       </div>
 
       <div style={{flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
-        {/* HEADER: Now strictly centered vertically */}
         <div className="v-table-head security-grid">
           <span className="col-label">TIME</span>
           <span className="col-label">ACTOR</span>
@@ -139,7 +139,6 @@ const SecurityFeed = () => {
           font-family: monospace; 
         }
 
-        /* GRID FIX: Forces absolute single-line alignment for Header and Rows */
         .security-grid {
           display: grid !important; 
           grid-template-columns: 180px 140px 1fr 140px 100px !important; 

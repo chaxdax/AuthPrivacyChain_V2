@@ -121,7 +121,6 @@ def shared_with_me():
     user_identity = request.headers.get('x-user-identity')
     conn = get_db()
     try:
-        # Resolve the provided identity to a phone number
         user = conn.execute("SELECT phone_number FROM users WHERE phone_number = ? OR numeric_id = ?", (user_identity, user_identity)).fetchone()
         if not user:
             return jsonify([])

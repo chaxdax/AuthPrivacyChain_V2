@@ -5,7 +5,6 @@ import os
 
 def log_activity(owner_id, accessor_username, file_name, action_type):
     try:
-        # Determine the database path based on where this script is located
         basedir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         db_path = os.path.join(basedir, 'auth_chain.db')
         

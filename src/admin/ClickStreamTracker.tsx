@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+import { API_BASE } from '../config';
+
 const ADMIN_TOKEN = 'admin-bypass';
-const API = 'http://127.0.0.1:5000';
+const API = API_BASE;
 const headers = { 'x-admin-token': ADMIN_TOKEN };
 
 interface ClickStreamLog {
@@ -21,8 +23,9 @@ interface ClickStreamLog {
 const formatDelhiTime = (utcDateStr: any) => {
   if (!utcDateStr) return '';
   let dateStr = String(utcDateStr);
-  if (!dateStr.includes('T') && !dateStr.includes('Z')) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  if (!dateStr.endsWith('Z') && !dateStr.includes('+') && !dateStr.includes('-')) {
+    dateStr = dateStr.replace(' ', 'T');
+    if (!dateStr.endsWith('Z')) dateStr += 'Z';
   }
   return new Date(dateStr).toLocaleString('en-IN', { 
     timeZone: 'Asia/Kolkata', 

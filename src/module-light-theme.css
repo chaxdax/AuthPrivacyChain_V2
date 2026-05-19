@@ -1,0 +1,211 @@
+/* Temporary Custom Theme Preview for Admin and User Modules */
+/* Theme: Creamy White Outer Layout with Dark/Neon Inner Content Windows */
+
+/* =========================================
+   MASTER FORENSIC DASHBOARD (ADMIN) OUTER OVERRIDES
+   ========================================= */
+
+/* Main Backgrounds & Containers */
+.soc-app {
+  background: linear-gradient(135deg, #FCFBF8 0%, #F4F1EA 50%, #EAE5DA 100%) !important; /* Creamy white / warm taupe */
+  color: #2D3436 !important;
+  font-family: 'Inter', sans-serif !important;
+}
+
+.soc-header {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.6) !important;
+  margin: -24px -24px 24px -24px !important;
+  padding: 20px 24px !important;
+  box-shadow: 0 8px 32px rgba(31, 38, 135, 0.05) !important;
+}
+
+.soc-logo {
+  background: linear-gradient(135deg, #6C5CE7, #8A2BE2) !important; /* Vibrant Purple/Indigo */
+  box-shadow: 0 4px 15px rgba(108, 92, 231, 0.4) !important;
+  border-radius: 12px !important;
+}
+
+.soc-title-area h1 {
+  color: #2D3436 !important; /* Dark bold text */
+  font-weight: 800 !important;
+}
+
+.soc-title-area p {
+  color: #6C5CE7 !important;
+  font-weight: 700 !important;
+}
+
+.admin-name {
+  color: #2D3436 !important;
+}
+
+.admin-role {
+  color: #636E72 !important;
+}
+
+/* Tabs / Navigation */
+.soc-tab {
+  background: rgba(255, 255, 255, 0.7) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.8) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03) !important;
+  transition: all 0.3s ease !important;
+}
+
+.soc-tab .box-name {
+  color: #2D3436 !important;
+  font-weight: 600 !important;
+}
+
+.soc-tab:hover {
+  background: rgba(255, 255, 255, 0.95) !important;
+  transform: translateY(-3px) !important;
+  box-shadow: 0 8px 25px rgba(108, 92, 231, 0.15) !important;
+}
+
+.soc-tab.active {
+  background: linear-gradient(135deg, #6C5CE7 0%, #8A2BE2 100%) !important;
+  border: none !important;
+  box-shadow: 0 8px 20px rgba(108, 92, 231, 0.4) !important;
+}
+
+.soc-tab.active .box-name {
+  color: #FFFFFF !important;
+}
+
+/* Global Action Buttons */
+.soc-pill-btn {
+  background: #FFFFFF !important;
+  border: 2px solid #6C5CE7 !important;
+  color: #6C5CE7 !important;
+  border-radius: 20px !important;
+  font-weight: 800 !important;
+  box-shadow: 0 4px 10px rgba(108, 92, 231, 0.1) !important;
+  transition: all 0.3s ease !important;
+}
+
+.soc-pill-btn:hover {
+  background: linear-gradient(135deg, #6C5CE7, #8A2BE2) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+  box-shadow: 0 8px 20px rgba(108, 92, 231, 0.4) !important;
+  transform: translateY(-2px) !important;
+}
+
+.soc-pill-btn.danger {
+  background: #FF7675 !important; /* Pastel Red/Coral */
+  border: none !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 6px 15px rgba(255, 118, 117, 0.3) !important;
+}
+
+.soc-pill-btn.danger:hover {
+  background: #D63031 !important;
+}
+
+/* =========================================
+   USER DASHBOARD LAYOUT (APP.TSX) OUTER OVERRIDES
+   ========================================= */
+
+.dashboard-outer-wrapper {
+  background: transparent !important;
+}
+
+.dash-container.user-mode, .dash-container.admin-mode {
+  background: linear-gradient(135deg, #FCFBF8 0%, #F4F1EA 50%, #EAE5DA 100%) !important;
+  color: #2D3436 !important;
+}
+
+.sidebar-cyber {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  border-right: 1px solid rgba(0, 0, 0, 0.05) !important;
+  box-shadow: 4px 0 15px rgba(0, 0, 0, 0.02) !important;
+}
+
+.sidebar-text h2 {
+  color: #2D3436 !important;
+}
+
+.sidebar-text p {
+  color: #6C5CE7 !important;
+}
+
+.nav-item {
+  color: #636E72 !important;
+}
+
+.nav-item:hover {
+  background: #F0F3FF !important;
+  color: #6C5CE7 !important;
+}
+
+.nav-item.active {
+  background: linear-gradient(135deg, #6C5CE7, #8A2BE2) !important;
+  color: #FFFFFF !important;
+}
+
+.btn-exit {
+  background: #FFFFFF !important;
+  border: 1px solid #E2E8F0 !important;
+  color: #FF7675 !important;
+}
+
+.btn-exit:hover {
+  background: #FF7675 !important;
+  color: #FFFFFF !important;
+}
+
+.main-content {
+  background: transparent !important;
+}
+
+.module-title-big {
+  color: #2D3436 !important;
+}
+
+.module-definition-big {
+  color: #636E72 !important;
+}
+
+/* We leave .visualizer-box and .telemetry-card UNSTYLED here so they retain their native dark backgrounds */
+
+.floating-dock-sleek {
+  background: rgba(255, 255, 255, 0.9) !important;
+  backdrop-filter: blur(15px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  box-shadow: 0 15px 40px rgba(31, 38, 135, 0.1) !important;
+}
+
+.dock-item-sleek {
+  color: #2D3436 !important;
+}
+
+.dock-item-sleek:hover {
+  background: #F0F3FF !important;
+}
+
+.dock-item-sleek.active {
+  background: rgba(108, 92, 231, 0.1) !important;
+  filter: drop-shadow(0 0 5px rgba(108, 92, 231, 0.3)) !important;
+}
+
+.dock-divider {
+  background: rgba(0, 0, 0, 0.1) !important;
+}
+
+.cyber-action-btn {
+  background: #FFFFFF !important;
+  color: #6C5CE7 !important;
+  border: 2px solid #6C5CE7 !important;
+  box-shadow: 0 4px 10px rgba(108, 92, 231, 0.1) !important;
+}
+
+.cyber-action-btn:hover {
+  background: linear-gradient(135deg, #6C5CE7, #8A2BE2) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+}

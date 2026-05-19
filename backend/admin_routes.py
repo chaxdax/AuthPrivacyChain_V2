@@ -22,7 +22,6 @@ def admin_required(f):
     return decorated
 
 
-# ─── MODULE 1: MASTER FORENSIC DASHBOARD ─────────────────────────────────────
 
 @admin_bp.route('/admin/forensic-stats', methods=['GET'])
 @admin_required
@@ -62,7 +61,6 @@ def forensic_stats():
             for r in cursor.fetchall()
         ]
 
-        # Live threats — join with users to get numeric_id
         cursor.execute('''
             SELECT a.id, a.actor_ip, a.file_id, a.severity, a.alert_message, a.timestamp, u.numeric_id
             FROM alerts a
@@ -77,7 +75,6 @@ def forensic_stats():
             for r in cursor.fetchall()
         ]
 
-        # Users list — show name, fallback to numeric_id label if no name stored
         cursor.execute("SELECT numeric_id, legal_name, phone_number FROM users ORDER BY rowid DESC")
         users_list = [
             {
@@ -88,7 +85,6 @@ def forensic_stats():
             for r in cursor.fetchall()
         ]
 
-        # Files list — only file_id + encryption status (no filename for privacy)
         cursor.execute("SELECT id, is_encrypted FROM files ORDER BY rowid DESC")
         files_list = [
             {
@@ -205,7 +201,6 @@ def system_scan():
     }), 200
 
 
-# ─── RECOVERY QUEUE MANAGEMENT ───────────────────────────────────────────────
 
 @admin_bp.route('/admin/recovery-queue', methods=['GET'])
 @admin_required
@@ -272,7 +267,6 @@ def reject_recovery(req_id):
     return jsonify({"message": "Recovery request REJECTED."}), 200
 
 
-# ─── MODULE 3: BLOCKCHAIN LEDGER VIEWER ──────────────────────────────────────
 
 @admin_bp.route('/admin/blockchain-ledger', methods=['GET'])
 @admin_required
@@ -282,9 +276,6 @@ def blockchain_ledger():
     
     blocks_data = []
     
-    # Fetch ALL permission events (GRANT + REVOKE) — immutable, even if file is deleted
-    # LEFT JOIN on files so record persists when file is deleted by user
-    # LEFT JOIN on users for both owner and target to resolve numeric IDs
     cursor.execute('''
         SELECT
             p.id,
@@ -336,7 +327,6 @@ def blockchain_ledger():
     return jsonify({"chain_length": len(ledger), "integrity": "VERIFIED", "blocks": ledger})
 
 
-# ─── MODULE 4: IP-GEOFENCING MONITOR ─────────────────────────────────────────
 
 @admin_bp.route('/admin/ip-threats', methods=['GET'])
 @admin_required
@@ -364,98 +354,5 @@ def ip_threats():
     return jsonify(threats)
 
 
-# ─── MODULE 5: UNAUTHORIZED ACCESS LOGS ──────────────────────────────────────
-
-@admin_bp.route('/admin/unauthorized-logs', methods=['GET'])
-@admin_required
-def unauthorized_logs():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id, actor_ip, file_id, severity, alert_message, resolved, timestamp
-        FROM alerts
-        ORDER BY timestamp DESC
-    ''')
-    logs = [
-        {"id": r[0], "ip": r[1], "file_id": r[2], "severity": r[3],
-         "message": r[4], "resolved": bool(r[5]), "timestamp": r[6]}
-        for r in cursor.fetchall()
-    ]
-    conn.close()
-    return jsonify(logs)
 
 
-# ─── MODULE 6: USER MANAGEMENT ───────────────────────────────────────────────
-
-@admin_bp.route('/admin/users', methods=['GET'])
-@admin_required
-def list_users():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT u.id, u.phone_number, u.numeric_id, u.legal_name,
-               COUNT(DISTINCT f.id) as file_count,
-               COUNT(DISTINCT a.id) as alert_count
-        FROM users u
-        LEFT JOIN files f ON u.id = f.user_id
-        LEFT JOIN alerts a ON u.id = a.owner_id
-        GROUP BY u.id
-    ''')
-    users = [
-        {"id": r[0], "phone": r[1], "numeric_id": r[2], "name": r[3] or "—", "files": r[4], "alerts": r[5]}
-        for r in cursor.fetchall()
-    ]
-    conn.close()
-    return jsonify(users)
-
-
-@admin_bp.route('/admin/suspend-user/<user_id>', methods=['POST'])
-@admin_required
-def suspend_user(user_id):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    log_id = str(uuid.uuid4())
-    cursor.execute(
-        "INSERT INTO activity_logs (id, owner_id, actor_identity, action, target_name) VALUES (?, ?, ?, ?, ?)",
-        (log_id, 'ADM-777', 'ADM-777', 'SUSPEND_USER', user_id)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({"message": f"User {user_id} suspended. Session token invalidated."}), 200
-
-
-@admin_bp.route('/admin/reset-token/<user_id>', methods=['POST'])
-@admin_required
-def reset_token(user_id):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    log_id = str(uuid.uuid4())
-    cursor.execute(
-        "INSERT INTO activity_logs (id, owner_id, actor_identity, action, target_name) VALUES (?, ?, ?, ?, ?)",
-        (log_id, 'ADM-777', 'ADM-777', 'RESET_TOKEN', user_id)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({"message": f"Token for user {user_id} has been force-reset."}), 200
-
-@admin_bp.route('/admin/resolve-alert/<alert_id>', methods=['POST'])
-@admin_required
-def admin_resolve_alert(alert_id):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Check if the alert exists and is unresolved
-    cursor.execute("SELECT id FROM alerts WHERE id=? AND resolved=0", (alert_id,))
-    if not cursor.fetchone():
-        conn.close()
-        return jsonify({"message": "Alert not found or already resolved."}), 404
-        
-    cursor.execute("UPDATE alerts SET resolved=1 WHERE id=?", (alert_id,))
-    log_id = str(uuid.uuid4())
-    cursor.execute(
-        "INSERT INTO activity_logs (id, owner_id, actor_identity, action, target_name) VALUES (?, ?, ?, ?, ?)",
-        (log_id, 'ADM-777', 'ADM-777', 'RESOLVE_ALERT', alert_id)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Alert resolved successfully."}), 200

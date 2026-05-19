@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE } from './config';
 
 const PermissionManager = () => {
   const [targetUser, setTargetUser] = useState('');
@@ -14,11 +15,11 @@ const PermissionManager = () => {
     try {
       const headers = { 'x-user-identity': myIdentity };
      
-      const resOutbound = await axios.get('http://127.0.0.1:5000/my-shares', { headers });
+      const resOutbound = await axios.get(`${API_BASE}/my-shares`, { headers });
       setActiveShares(resOutbound.data || []);
 
       
-      const resInbound = await axios.get('http://127.0.0.1:5000/shared-with-me', { headers });
+      const resInbound = await axios.get(`${API_BASE}/shared-with-me`, { headers });
       setReceivedFiles(resInbound.data || []);
     } catch (err) { 
       console.error("Sync failed - Backend might be unreachable."); 
@@ -31,7 +32,7 @@ const PermissionManager = () => {
 
   const handleGrant = async () => {
     try {
-      const res = await axios.post('http://127.0.0.1:5000/grant', {
+      const res = await axios.post(`${API_BASE}/grant`, {
         fileId: fileId.replace('#', '').trim(),
         targetUser: targetUser.trim(),
         owner: myIdentity
@@ -46,7 +47,7 @@ const PermissionManager = () => {
 
   const handleDecrypt = async (file: any) => {
     try {
-      const res = await axios.post('http://127.0.0.1:5000/view-decrypted', 
+      const res = await axios.post(`${API_BASE}/view-decrypted`, 
         { fileId: file.id, username: myIdentity }, 
         { responseType: 'blob' }
       );
@@ -65,7 +66,7 @@ const PermissionManager = () => {
 
   const handleRevoke = async (fId: string, tUser: string) => {
     try {
-      await axios.post('http://127.0.0.1:5000/revoke', {
+      await axios.post(`${API_BASE}/revoke`, {
         fileId: fId, targetUser: tUser, owner: myIdentity
       });
       fetchData();
@@ -78,7 +79,6 @@ const PermissionManager = () => {
     <div className="module-inner-content">
       <div className="perm-grid">
         
-        {/* GRANT SECTION */}
         <div className="perm-box">
           <label>AUTHORIZE NEW ACCESS</label>
           <div className="input-group">
@@ -107,7 +107,6 @@ const PermissionManager = () => {
           {status && <p className="status-msg">{status}</p>}
         </div>
 
-        {/* OUTBOUND SECTION */}
         <div className="perm-box" style={{display: 'flex', flexDirection: 'column'}}>
           <label>OUTBOUND_ACCESS (MY SHARED FILES)</label>
           <div className="shares-list scrollable" style={{flex: 1}}>
@@ -125,7 +124,6 @@ const PermissionManager = () => {
         </div>
       </div>
 
-      {/* INBOUND SECTION */}
       <div className="perm-box" style={{marginTop: '25px', flex: 1, display: 'flex', flexDirection: 'column'}}>
         <label>INBOUND_ACCESS_NODES (SHARED WITH YOU)</label>
         <div className="shares-list horizontal" style={{flex: 1, alignContent: 'flex-start'}}>
