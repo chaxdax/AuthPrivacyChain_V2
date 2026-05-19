@@ -661,6 +661,35 @@ function App() {
             .m-val.red { color: #ef4444; }
             .shield-dismiss-btn { background: none; border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 12px 30px; border-radius: 4px; font-size: 11px; font-weight: 800; letter-spacing: 2px; cursor: pointer; transition: 0.3s; }
             .shield-dismiss-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px rgba(255,255,255,0.3); }
+
+            @media (max-width: 768px) {
+             .asset-cloud { display: none !important; }
+             .auth-card { max-width: 90% !important; padding: 30px 20px !important; border-radius: 24px !important; margin: 20px auto; }
+             .top-right-ledger-btn { position: relative !important; top: auto !important; right: auto !important; margin: 15px auto 0 !important; font-size: 11px !important; padding: 8px 16px !important; order: -1; }
+             .main-portal { justify-content: flex-start !important; padding: 20px 10px !important; min-height: 100vh !important; }
+             .toggle-switcher { margin-bottom: 20px !important; }
+             .cyber-field { margin-bottom: 15px !important; }
+             .cyber-field input { padding: 14px 18px !important; font-size: 13px !important; border-radius: 12px !important; }
+             .cyber-btn { padding: 14px !important; font-size: 11px !important; border-radius: 12px !important; }
+             
+             .dash-container { flex-direction: column !important; height: auto !important; min-height: 100vh !important; overflow-y: auto !important; }
+             .sidebar-cyber { width: 100% !important; border-right: none !important; border-bottom: 1px solid #1a1a1a !important; padding: 20px !important; box-sizing: border-box !important; }
+             .sidebar-header { margin-bottom: 20px !important; }
+             .main-content { padding: 20px 15px !important; box-sizing: border-box !important; width: 100% !important; }
+             .module-title-big { font-size: 28px !important; margin-bottom: 10px !important; }
+             .module-definition-big { font-size: 14px !important; }
+             .forensic-grid { flex-direction: column !important; height: auto !important; gap: 20px !important; }
+             .visualizer-box { min-height: 450px !important; border-radius: 24px !important; padding: 15px !important; width: 100% !important; box-sizing: border-box !important; }
+             .telemetry-card { border-radius: 24px !important; padding: 20px !important; width: 100% !important; box-sizing: border-box !important; }
+             .floating-dock-sleek { position: fixed !important; bottom: 15px !important; width: 92% !important; border-radius: 16px !important; }
+             .dock-item-sleek { font-size: 18px !important; padding: 8px !important; }
+             .shield-title { font-size: 24px !important; }
+             .shield-container { width: 90% !important; gap: 15px !important; }
+             .shield-icon-wrap { width: 80px !important; height: 80px !important; }
+             .shield-main-icon-img { width: 50px !important; height: 50px !important; }
+             .shield-msg { font-size: 13px !important; }
+             .home-content-centered h1 { font-size: 24px !important; }
+           }
           `}</style>
         </div>
 

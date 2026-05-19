@@ -194,6 +194,14 @@ const SecurityFeed = () => {
         .fail { color: #ef4444; }
 
         .system-loader { padding: 50px; text-align: center; color: #222; font-weight: 900; font-family: monospace; }
+
+        @media (max-width: 768px) {
+          .module-inner-content { padding: 10px !important; }
+          .vault-header-control { flex-direction: column !important; padding: 15px !important; align-items: flex-start !important; }
+          .v-table-head { display: none !important; }
+          .v-table-row { grid-template-columns: 1fr !important; gap: 8px !important; padding: 15px !important; border-radius: 12px !important; }
+          .stat { text-align: left !important; margin-top: 5px !important; }
+        }
       `}</style>
     </div>
   );

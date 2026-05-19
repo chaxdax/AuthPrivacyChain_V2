@@ -305,6 +305,20 @@ const UserDashboard = ({ activeTab }: UserDashboardProps) => {
         .v-btn { background: #000; border: 1px solid #222; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 10px; cursor: pointer; font-weight: 800; }
         .v-btn.dec { border-color: #10b981; color: #10b981; }
         .v-btn.del:hover { color: #ef4444; border-color: #ef4444; }
+
+        @media (max-width: 768px) {
+          .vault-header-control { flex-direction: column !important; padding: 15px !important; gap: 10px !important; }
+          .v-picker-long { width: 100% !important; flex: none !important; box-sizing: border-box !important; padding: 14px !important; }
+          .btn-group { width: 100% !important; flex: none !important; gap: 10px !important; }
+          .v-upload-btn, .v-encrypt-btn { height: 45px !important; border-radius: 8px !important; }
+          .v-table-head { display: none !important; }
+          .v-table-row { grid-template-columns: 1fr !important; gap: 12px !important; padding: 15px !important; border-radius: 12px !important; }
+          .v-col-id { font-size: 10px !important; }
+          .v-col-name { font-size: 13px !important; white-space: normal !important; word-break: break-all !important; }
+          .v-col-status { font-size: 10px !important; }
+          .v-col-cmds { justify-content: flex-start !important; margin-top: 5px !important; }
+          .v-btn { padding: 8px 14px !important; border-radius: 8px !important; }
+        }
       `}</style>
     </div>
   );

@@ -166,6 +166,16 @@ const PermissionManager = () => {
         
         .empty-text { color: #333; font-size: 10px; text-align: center; padding: 20px 0; font-family: monospace; }
         .status-msg { font-size: 10px; color: #3b82f6; margin-top: 15px; font-family: monospace; border-left: 2px solid #3b82f6; padding-left: 10px; }
+
+        @media (max-width: 768px) {
+          .module-inner-content { padding: 10px !important; }
+          .perm-grid { grid-template-columns: 1fr !important; gap: 15px !important; }
+          .perm-box { padding: 15px !important; }
+          .share-item { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }
+          .share-item .revoke-btn { width: 100% !important; margin-top: 5px !important; }
+          .shares-list.horizontal { flex-direction: column !important; }
+          .share-item.received { width: 100% !important; box-sizing: border-box !important; }
+        }
       `}</style>
     </div>
   );

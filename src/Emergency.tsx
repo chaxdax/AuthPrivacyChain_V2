@@ -389,6 +389,15 @@ const EmergencyRecovery = () => {
           border-color: #2563eb;
           color: #2563eb;
         }
+
+        @media (max-width: 768px) {
+          .module-inner-content { padding: 10px !important; }
+          .vault-header-control { flex-direction: column !important; padding: 15px !important; align-items: flex-start !important; }
+          .recovery-card { padding: 15px !important; border-radius: 12px !important; }
+          .card-heading { font-size: 13px !important; }
+          .mode-tabs { flex-direction: column !important; gap: 8px !important; }
+          .mode-tab { width: 100% !important; text-align: center !important; }
+        }
       `}</style>
     </div>
   );
