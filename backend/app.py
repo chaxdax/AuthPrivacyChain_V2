@@ -171,14 +171,16 @@ def register():
         
         import subprocess
         phone = user_id_input.replace(" ", "").replace("-", "").replace("+", "")
-        if not phone.startswith('91'):
+        # If the user typed a 10-digit Indian number, prepend 91
+        if len(phone) == 10:
+            phone = '91' + phone
+        elif not phone.startswith('91'):
             phone = '91' + phone
         clean_phone = '+' + phone
 
         sms_message = f"Welcome to Batch 33's AuthPrivacyChain UserID: {numeric_id} Password: {password}"
         sms_message_escaped = sms_message.replace('"', '\\"')
 
-        # Try SMS service first (requires iPhone Text Message Forwarding), then iMessage
         apple_script = f"""
         tell application "Messages"
             activate
@@ -187,18 +189,14 @@ def register():
             set allServices to every service
             repeat with s in allServices
                 try
-                    set sType to (service type of s) as string
-                    if sType is "SMS" or sType is "iMessage" or sType is "RCS" then
-                        set b to buddy "{clean_phone}" of s
-                        send "{sms_message_escaped}" to b
-                        set didSend to true
-                        exit repeat
-                    end if
-                on error
+                    set b to buddy "{clean_phone}" of s
+                    send "{sms_message_escaped}" to b
+                    set didSend to true
+                    exit repeat
                 end try
             end repeat
             if didSend is false then
-                error "No valid service found for " & "{clean_phone}"
+                error "No valid service found for {clean_phone}"
             end if
         end tell
         """
